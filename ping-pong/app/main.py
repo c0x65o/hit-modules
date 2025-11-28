@@ -10,8 +10,8 @@ Uses filesystem storage for counters (no database required).
 
 from fastapi import FastAPI
 
-from app.db import get_counter, set_counter
 from app.schemas import CounterResponse
+from app.storage import get_counter, set_counter
 
 app = FastAPI(
     title="Hit Ping-Pong Service",
@@ -34,10 +34,10 @@ def root():
 @app.get("/counter/{counter_id}", response_model=CounterResponse)
 def get_counter_endpoint(counter_id: str):
     """Get current counter value.
-    
+
     Args:
         counter_id: Counter identifier
-    
+
     Returns:
         Counter value (initialized to 0 if doesn't exist)
     """
@@ -48,10 +48,10 @@ def get_counter_endpoint(counter_id: str):
 @app.post("/counter/{counter_id}/increment", response_model=CounterResponse)
 def increment_counter(counter_id: str):
     """Increment counter and return new value.
-    
+
     Args:
         counter_id: Counter identifier
-    
+
     Returns:
         Updated counter value
     """
@@ -64,13 +64,12 @@ def increment_counter(counter_id: str):
 @app.post("/counter/{counter_id}/reset", response_model=CounterResponse)
 def reset_counter(counter_id: str):
     """Reset counter to 0.
-    
+
     Args:
         counter_id: Counter identifier
-    
+
     Returns:
         Reset counter value
     """
     set_counter(counter_id, 0)
     return CounterResponse(id=counter_id, value=0)
-
