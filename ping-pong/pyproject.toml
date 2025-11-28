@@ -1,6 +1,6 @@
 [project]
 name = "hit-ping-pong"
-version = "1.1.0"
+version = "1.1.1"
 description = "Test service with in-memory counter (no database required)"
 requires-python = ">=3.11"
 dependencies = [
