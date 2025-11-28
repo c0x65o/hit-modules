@@ -9,6 +9,7 @@ from threading import Lock
 STORAGE_DIR = Path(os.getenv("PING_PONG_STORAGE_DIR", "/tmp/ping-pong-counters"))
 STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
+# Lock for thread-safe file operations
 _file_lock = Lock()
 
 
