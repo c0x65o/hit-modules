@@ -1,5 +1,5 @@
 name: ping-pong
-version: 1.0.1
+version: 1.1.0
 description: Test service with in-memory counter (no database required)
 author: Hitcents
 language: python
