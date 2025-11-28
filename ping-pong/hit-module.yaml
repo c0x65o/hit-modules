@@ -1,15 +1,10 @@
 name: ping-pong
 version: 1.0.0
-description: Test service with counter (stateful DB test)
+description: Test service with in-memory counter (no database required)
 author: Hitcents
 language: python
 framework: fastapi
-default_port: 8099
-
-database:
-  required: true
-  tables:
-    - counters
+default_port: 8001
 
 endpoints:
   - GET /counter/{id}
@@ -19,6 +14,6 @@ endpoints:
 settings_schema:
   namespace:
     type: string
-    default: default
+    default: shared
     description: "Namespace for multi-tenancy (optional)"
 
