@@ -16,6 +16,10 @@ class Base(DeclarativeBase):
 # Database URL from environment
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://localhost/ping_pong")
 
+# Ensure psycopg driver is specified for PostgreSQL URLs
+if DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
+
 # Create engine and session factory
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -36,4 +40,3 @@ def get_db() -> Generator[Session, None, None]:
         raise
     finally:
         db.close()
-
