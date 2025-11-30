@@ -9,6 +9,8 @@ try:
     from sqlalchemy import create_engine
     from sqlalchemy.engine import Engine
 except ImportError:  # pragma: no cover - optional dependency
+    from typing import Any
+
     Engine: Any = Any  # type: ignore[misc,assignment]
     create_engine: Any = None  # type: ignore[assignment]
 
