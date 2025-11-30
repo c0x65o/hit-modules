@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: hit-modules
-Version: 0.1.0
+Version: 0.1.1
 Summary: Shared middleware utilities for HIT microservices
 Author-email: HIT Platform <platform@hitlabs.dev>
 Requires-Python: >=3.11
