@@ -9,8 +9,8 @@ try:
     from sqlalchemy import create_engine
     from sqlalchemy.engine import Engine
 except ImportError:  # pragma: no cover - optional dependency
-    Engine = Any  # type: ignore[misc]
-    create_engine = None
+    Engine: Any = Any  # type: ignore[misc,assignment]
+    create_engine: Any = None  # type: ignore[assignment]
 
 from .client import ProvisionerClient
 from .errors import DatabaseConnectionError, ProvisionerError
