@@ -62,26 +62,6 @@ def my_endpoint(config: dict[str, Any] = Depends(get_module_config)):
     ...
 ```
 
-## Legacy Pattern (Still Supported)
-
-The old manual pattern still works for backward compatibility:
-
-```python
-from hit_modules.auth import enforce_fastapi_auth
-from hit_modules.middleware import get_module_config
-from hit_modules.version import get_module_version, log_module_startup
-
-app = FastAPI(title="My Module")
-enforce_fastapi_auth(app)
-
-__version__ = get_module_version(module_name="my-module")
-log_module_startup(module_name="my-module", version=__version__)
-
-@app.get("/endpoint")
-def my_endpoint(config: dict[str, Any] = Depends(get_module_config)):
-    ...
-```
-
 ## Shared Routes
 
 All modules using `create_hit_app()` or `install_hit_modules()` automatically get these routes:

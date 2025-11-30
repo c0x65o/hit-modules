@@ -6,6 +6,7 @@ python/hit_modules/client.py
 python/hit_modules/config.py
 python/hit_modules/database.py
 python/hit_modules/errors.py
+python/hit_modules/fastapi.py
 python/hit_modules/logger.py
 python/hit_modules/middleware.py
 python/hit_modules/module_config.py
@@ -15,3 +16,4 @@ python/hit_modules.egg-info/SOURCES.txt
 python/hit_modules.egg-info/dependency_links.txt
 python/hit_modules.egg-info/requires.txt
 python/hit_modules.egg-info/top_level.txt
+tests/test_config.py

@@ -63,8 +63,12 @@ def require_provisioned_token(
     return claims
 
 
-def enforce_fastapi_auth(app: FastAPI) -> None:
-    """Attach the provisioner auth dependency to all routes in a FastAPI app."""
+def _enforce_fastapi_auth(app: FastAPI) -> None:
+    """Internal: Attach the provisioner auth dependency to all routes in a FastAPI app.
+    
+    This is used internally by install_hit_modules(). Use install_hit_modules() or
+    create_hit_app() instead of calling this directly.
+    """
 
     dependency = Depends(require_provisioned_token)
     app.router.dependencies.append(dependency)

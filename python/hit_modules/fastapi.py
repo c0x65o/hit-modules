@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 
-from .auth import enforce_fastapi_auth, require_provisioned_token
+from .auth import _enforce_fastapi_auth, require_provisioned_token
 from .client import ProvisionerClient
 from .errors import ProvisionerConfigError, ProvisionerError
 from .logger import get_logger
@@ -163,7 +163,7 @@ def install_hit_modules(
     # Enforce authentication (unless disabled)
     # This adds a dependency to app.router, which affects routes registered AFTER this point
     if enforce_auth:
-        enforce_fastapi_auth(app)
+        _enforce_fastapi_auth(app)
         logger.info("Bearer token authentication enforced for all routes")
     
     # Mount authenticated routes AFTER enforcing auth (so they inherit the auth requirement)

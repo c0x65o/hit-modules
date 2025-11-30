@@ -12,7 +12,7 @@ from .errors import (
 )
 from .fastapi import create_hit_app, install_hit_modules
 from .middleware import get_module_config, get_module_secrets, get_module_settings
-from .auth import enforce_fastapi_auth, require_provisioned_token
+from .auth import require_provisioned_token
 from .version import get_module_version, log_module_startup
 
 __all__ = [
@@ -25,7 +25,6 @@ __all__ = [
     "ProvisionerRequestError",
     "SecretNotFoundError",
     "require_provisioned_token",
-    "enforce_fastapi_auth",
     "create_hit_app",
     "install_hit_modules",
     "get_module_config",
