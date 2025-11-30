@@ -1,0 +1,14 @@
+services:
+  - name: provisioner
+    kind: api
+    language: python
+    framework: fastapi
+    source_dir: .
+    port: 8700
+    dev: uv run python -m hit_modules.provisioner
+    start: uv run python -m hit_modules.provisioner
+    env:
+      PROVISIONER_ALLOW_ANONYMOUS: "1"
+      PROVISIONER_HOST: "127.0.0.1"
+      PROVISIONER_PORT: "8700"
+
