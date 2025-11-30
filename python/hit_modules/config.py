@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from .errors import ProvisionerConfigError
+
 
 def _read_bool(value: str | None, default: bool) -> bool:
     if value is None:
@@ -39,11 +41,19 @@ class ClientConfig:
 
         base_url = os.environ.get("PROVISIONER_URL", "").strip()
         if not base_url:
-            # Allow local fallback; the client can still use env secrets without remote calls.
-            base_url = ""
+            raise ProvisionerConfigError(
+                "PROVISIONER_URL is required for hit-modules clients. "
+                "Set it to the provisioner service base URL (e.g., https://provisioner.dev.svc)."
+            )
 
-        module_token = os.environ.get("HIT_MODULE_ID_TOKEN")
-        project_token = os.environ.get("HIT_PROJECT_TOKEN")
+        module_token = (os.environ.get("HIT_MODULE_ID_TOKEN") or "").strip() or None
+        project_token = (os.environ.get("HIT_PROJECT_TOKEN") or "").strip() or None
+        if not (module_token or project_token):
+            raise ProvisionerConfigError(
+                "HIT_PROJECT_TOKEN is required for module provisioning. "
+                "Ensure your pod is injected with HIT_PROJECT_TOKEN (and optionally HIT_MODULE_ID_TOKEN)."
+            )
+
         timeout = _read_float(os.environ.get("HIT_PROVISIONER_TIMEOUT"), 5.0)
         verify_ssl = _read_bool(os.environ.get("HIT_PROVISIONER_VERIFY_SSL"), True)
 

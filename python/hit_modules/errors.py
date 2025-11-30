@@ -23,6 +23,10 @@ class SecretNotFoundError(ProvisionerError):
     """Raised when the requested secret cannot be located."""
 
 
+class ProvisionerConfigError(ProvisionerError):
+    """Raised when module environment/configuration is invalid."""
+
+
 class DatabaseConnectionError(RuntimeError):
     """Raised when the database manager cannot create an engine/connection."""
 

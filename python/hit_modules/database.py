@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any, Dict
 
 try:
@@ -15,7 +14,11 @@ except ImportError:  # pragma: no cover - optional dependency
     create_engine: Any = None  # type: ignore[assignment]
 
 from .client import ProvisionerClient
-from .errors import DatabaseConnectionError, ProvisionerError
+from .errors import (
+    DatabaseConnectionError,
+    ProvisionerConfigError,
+    ProvisionerError,
+)
 from .logger import get_logger
 
 logger = get_logger(__name__)
@@ -24,18 +27,9 @@ logger = get_logger(__name__)
 class DatabaseConnectionManager:
     """Provides cached SQLAlchemy engines for module databases."""
 
-    def __init__(
-        self,
-        client: ProvisionerClient | None = None,
-        *,
-        default_env_keys: tuple[str, ...] = (
-            "HIT_AUTH_DATABASE_URL",
-            "DATABASE_URL",
-        ),
-    ):
+    def __init__(self, client: ProvisionerClient | None = None):
         self._client = client or ProvisionerClient()
         self._engines: Dict[str, Engine] = {}
-        self._default_env_keys = default_env_keys
 
     def _ensure_sqlalchemy(self) -> None:
         if create_engine is None:
@@ -51,7 +45,7 @@ class DatabaseConnectionManager:
         secret_key: str = "auth-db",
         role: str | None = None,
     ) -> str:
-        """Resolve the database URL via provisioner or environment fallback."""
+        """Resolve the database URL via provisioner (no environment fallback)."""
 
         try:
             secret = self._client.get_database_secret(
@@ -59,31 +53,31 @@ class DatabaseConnectionManager:
                 secret_key=secret_key,
                 role=role,
             )
-            db_url = secret.get("url") or secret.get("DATABASE_URL")
-            if db_url:
-                logger.debug(
-                    "Resolved database URL via provisioner",
-                    extra={"namespace": namespace, "secret_key": secret_key},
-                )
-                return db_url
+        except ProvisionerConfigError as exc:
+            raise DatabaseConnectionError(
+                f"Provisioner configuration invalid while fetching database secret: {exc}"
+            ) from exc
         except ProvisionerError as exc:
-            logger.warning(
-                "Provisioner lookup failed (%s). Falling back to environment.",
-                exc,
+            raise DatabaseConnectionError(
+                f"Provisioner lookup failed for namespace '{namespace}': {exc}"
+            ) from exc
+
+        if not secret:
+            raise DatabaseConnectionError(
+                f"Provisioner returned empty secret for namespace '{namespace}' ({secret_key})."
             )
 
-        for key in self._default_env_keys:
-            env_value = os.environ.get(key)
-            if env_value:
-                logger.info(
-                    "Using %s from environment for namespace %s", key, namespace
-                )
-                return env_value
+        db_url = secret.get("url") or secret.get("DATABASE_URL")
+        if not db_url:
+            raise DatabaseConnectionError(
+                f"Provisioner secret missing database URL for namespace '{namespace}' ({secret_key})."
+            )
 
-        raise DatabaseConnectionError(
-            "Unable to determine database URL. Provisioner lookup failed and no "
-            "environment fallback was found."
+        logger.debug(
+            "Resolved database URL via provisioner",
+            extra={"namespace": namespace, "secret_key": secret_key},
         )
+        return db_url
 
     def get_engine(
         self,

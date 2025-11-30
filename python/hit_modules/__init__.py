@@ -5,21 +5,33 @@ from .config import ClientConfig
 from .database import DatabaseConnectionManager
 from .errors import (
     ProvisionerAuthError,
+    ProvisionerConfigError,
     ProvisionerError,
     ProvisionerRequestError,
     SecretNotFoundError,
 )
-from .provisioner import ProvisionerSettings, create_app
+from .fastapi import create_hit_app, install_hit_modules
+from .middleware import get_module_config, get_module_secrets, get_module_settings
+from .auth import enforce_fastapi_auth, require_provisioned_token
+from .version import get_module_version, log_module_startup
 
 __all__ = [
     "ClientConfig",
     "ProvisionerClient",
     "DatabaseConnectionManager",
     "ProvisionerError",
+    "ProvisionerConfigError",
     "ProvisionerAuthError",
     "ProvisionerRequestError",
     "SecretNotFoundError",
-    "ProvisionerSettings",
-    "create_app",
+    "require_provisioned_token",
+    "enforce_fastapi_auth",
+    "create_hit_app",
+    "install_hit_modules",
+    "get_module_config",
+    "get_module_secrets",
+    "get_module_settings",
+    "get_module_version",
+    "log_module_startup",
 ]
 

@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: hit-modules
-Version: 0.1.1
+Version: 1.0.2
 Summary: Shared middleware utilities for HIT microservices
 Author-email: HIT Platform <platform@hitlabs.dev>
 Requires-Python: >=3.11
@@ -18,34 +18,44 @@ Requires-Dist: httpx>=0.26.0; extra == "dev"
 
 # hit-modules
 
-Shared plumbing for HIT microservices. This repo now contains:
+Shared client-side utilities for HIT microservices. This repo contains:
 
-- **Python middleware client** (`python/hit_modules`) for modules to fetch secrets/tokens via the provisioner.
-- **Provisioner service** (FastAPI) that exposes `/healthz` and `/api/v1/secrets/database`.
-- Reference tests that exercise the happy path.
+- **Python client library** (`python/hit_modules`) for modules to:
+  - Fetch secrets/tokens from the provisioner service
+  - Get module configuration from `hit.yaml` via the provisioner
+  - Connect to databases using provisioner-managed secrets
+  - Enforce authentication via bearer tokens
+  - Standardize version detection and logging
 
-## Running the provisioner locally
+## Client Usage
 
+Modules use `hit-modules` to interact with the provisioner service:
+
+```python
+from hit_modules.auth import enforce_fastapi_auth
+from hit_modules.middleware import get_module_config
+from hit_modules.version import get_module_version, log_module_startup
+
+# Enforce bearer token auth on all routes
+enforce_fastapi_auth(app)
+
+# Get module config from hit.yaml (injected as FastAPI dependency)
+@app.get("/endpoint")
+def my_endpoint(config: dict[str, Any] = Depends(get_module_config)):
+    increment = config.get("settings", {}).get("increment", 1)
+    ...
+
+# Get version and log startup
+__version__ = get_module_version(module_name="my-module")
+log_module_startup(module_name="my-module", version=__version__)
 ```
-export PROVISIONER_ALLOW_ANONYMOUS=1
-export HIT_PROVISIONER_DEFAULT_DB_URL="postgresql://local@localhost/dev"
-uv run python -m hit_modules.provisioner
-```
 
-Then POST to `http://127.0.0.1:8700/api/v1/secrets/database` with:
+## Provisioner Service
 
-```json
-{
-  "namespace": "shared",
-  "secretKey": "auth-db"
-}
-```
-
-The server will return a connection string (either from a JSON secrets file referenced by `PROVISIONER_SECRETS_PATH` or from `HIT_PROVISIONER_DEFAULT_DB_URL`).
+The provisioner server is in a separate repository: [`hit-module-provisioner`](https://github.com/c0x65o/hit-module-provisioner)
 
 ## Tests
 
 ```
 uv run --extra dev pytest
 ```
-

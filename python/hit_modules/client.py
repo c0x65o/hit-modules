@@ -10,6 +10,7 @@ import requests
 from .config import ClientConfig
 from .errors import (
     ProvisionerAuthError,
+    ProvisionerConfigError,
     ProvisionerError,
     ProvisionerRequestError,
     SecretNotFoundError,
@@ -29,6 +30,14 @@ class ProvisionerClient:
         session: requests.Session | None = None,
     ):
         self._config = config or ClientConfig.from_env()
+        if not self._config.base_url:
+            raise ProvisionerConfigError(
+                "Provisioner base URL missing. Did you forget to set PROVISIONER_URL?"
+            )
+        if not (self._config.module_token or self._config.project_token):
+            raise ProvisionerConfigError(
+                "Provisioner authentication requires HIT_PROJECT_TOKEN (and optionally HIT_MODULE_ID_TOKEN)."
+            )
         self._session = session or requests.Session()
 
     @property
@@ -37,7 +46,7 @@ class ProvisionerClient:
 
     def _build_url(self, path: str) -> str:
         if not self.base_url:
-            raise ProvisionerError(
+            raise ProvisionerConfigError(
                 "Provisioner base URL is not configured. "
                 "Set PROVISIONER_URL or supply a ClientConfig."
             )
@@ -145,4 +154,26 @@ class ProvisionerClient:
         except ProvisionerError as exc:
             logger.warning("Provisioner health check failed: %s", exc)
             return False
+
+    def verify_project_token(self, token: str) -> dict[str, Any]:
+        """Ask the provisioner to validate an end-user/project token."""
+
+        payload = {"token": token}
+        return self._request(
+            "POST",
+            "/api/v1/tokens/validate",
+            json_body=payload,
+            expected_status=200,
+        )
+
+    def get_module_config(self, module_name: str) -> dict[str, Any]:
+        """Fetch module-specific configuration from the provisioner."""
+
+        payload = {"moduleName": module_name}
+        return self._request(
+            "POST",
+            "/api/v1/config/module",
+            json_body=payload,
+            expected_status=200,
+        )
 
