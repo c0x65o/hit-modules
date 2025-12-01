@@ -12,7 +12,7 @@ from .auth import _enforce_fastapi_auth, require_provisioned_token
 from .client import ProvisionerClient
 from .errors import ProvisionerConfigError, ProvisionerError
 from .logger import get_logger
-from .middleware import get_module_config, get_module_secrets
+from .middleware import clear_config_cache, get_module_config, get_module_secrets
 from .version import get_module_version, log_module_startup
 
 logger = get_logger(__name__)
@@ -63,17 +63,20 @@ def hit_config(
     """Get module configuration (requires authentication).
     
     Returns:
-    - Module settings (from hit.yaml)
+    - Full module config from hit.yaml (name, version, namespace, settings, etc.)
     - Config source (provisioner)
     - Does NOT expose secrets (only indicates if present)
     """
     module_name = os.getenv("HIT_MODULE_NAME", "unknown")
-    settings = config.get("settings", {})
+    
+    # Return full module config, not just settings
+    # Filter out secrets block from the config for security
+    config_without_secrets = {k: v for k, v in config.items() if k != "secrets"}
     
     return {
         "module": module_name,
         "config_source": "provisioner",
-        "settings": settings,
+        "config": config_without_secrets,
         "has_secrets": bool(secrets),
         "authenticated_as": claims.get("project_slug"),
     }
@@ -114,6 +117,39 @@ def hit_provisioner_status(
         ) from exc
     
     return status_info
+
+
+@_auth_router.post("/reload")
+def hit_reload_config(
+    claims: dict[str, Any] = Depends(require_provisioned_token),
+) -> dict[str, Any]:
+    """Reload module configuration from provisioner.
+    
+    Clears the local config cache and fetches fresh config from the provisioner.
+    Call this after updating hit.yaml and reloading the provisioner.
+    
+    Requires authentication.
+    """
+    module_name = os.getenv("HIT_MODULE_NAME", "unknown")
+    
+    # Clear the config cache
+    clear_config_cache()
+    
+    # Fetch fresh config
+    try:
+        config = get_module_config()
+        settings = config.get("settings", {})
+        return {
+            "status": "ok",
+            "module": module_name,
+            "message": "Configuration reloaded",
+            "settings": settings,
+        }
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to reload config: {exc}",
+        ) from exc
 
 
 def install_hit_modules(
@@ -171,7 +207,7 @@ def install_hit_modules(
     # Mount authenticated routes AFTER enforcing auth (so they inherit the auth requirement)
     if include_routes:
         app.include_router(_auth_router)
-        logger.info("Authenticated HIT routes mounted: /hit/config, /hit/provisioner")
+        logger.info("Authenticated HIT routes mounted: /hit/config, /hit/provisioner, /hit/reload")
     
     # Configure CORS if requested
     if cors_origins is not None:

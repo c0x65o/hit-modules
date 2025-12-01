@@ -59,6 +59,15 @@ def _load_module_config(module_name: str) -> dict[str, Any]:
         ) from exc
 
 
+def clear_config_cache() -> None:
+    """Clear the module config cache, forcing a reload from provisioner on next request.
+    
+    Call this after the provisioner has reloaded its config to pick up changes.
+    """
+    _load_module_config.cache_clear()
+    logger.info("Module config cache cleared")
+
+
 def get_module_config() -> dict[str, Any]:
     """FastAPI dependency that provides module config from hit.yaml via provisioner.
     
