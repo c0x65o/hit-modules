@@ -28,13 +28,23 @@ class ProvisionerClient:
         config: ClientConfig | None = None,
         *,
         session: requests.Session | None = None,
+        require_token: bool = True,
     ):
-        self._config = config or ClientConfig.from_env()
+        """Initialize the provisioner client.
+        
+        Args:
+            config: Client configuration. If None, loads from environment.
+            session: Optional requests session to use.
+            require_token: If True, requires a token for authentication.
+                          Set to False for shared modules that only validate incoming tokens.
+        """
+        self._config = config or ClientConfig.from_env(require_token=require_token)
         if not self._config.base_url:
             raise ProvisionerConfigError(
                 "Provisioner base URL missing. Did you forget to set PROVISIONER_URL?"
             )
-        if not (self._config.module_token or self._config.project_token):
+        # Only require token if explicitly requested
+        if require_token and not (self._config.module_token or self._config.project_token):
             raise ProvisionerConfigError(
                 "Provisioner authentication requires HIT_PROJECT_TOKEN (and optionally HIT_MODULE_ID_TOKEN)."
             )

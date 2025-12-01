@@ -17,8 +17,14 @@ logger = get_logger(__name__)
 
 @lru_cache(maxsize=1)
 def _get_provisioner_client() -> ProvisionerClient:
-    """Get cached provisioner client."""
-    return ProvisionerClient()
+    """Get cached provisioner client.
+    
+    Note: We don't require a token here because:
+    1. Shared modules (ping-pong, auth) don't have their own HIT_PROJECT_TOKEN
+    2. They load config on startup before any project requests arrive
+    3. For auth, they use require_provisioned_token() which validates incoming tokens
+    """
+    return ProvisionerClient(require_token=False)
 
 
 def _get_module_name() -> str:

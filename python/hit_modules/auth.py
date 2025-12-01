@@ -18,7 +18,8 @@ _bearer = HTTPBearer(auto_error=False)
 
 @lru_cache(maxsize=1)
 def _client() -> ProvisionerClient:
-    return ProvisionerClient()
+    # Create client without requiring own token - shared modules validate incoming tokens
+    return ProvisionerClient(require_token=False)
 
 
 def require_provisioned_token(

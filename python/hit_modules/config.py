@@ -34,10 +34,17 @@ class ClientConfig:
     project_token: str | None = None
     timeout: float = 5.0
     verify_ssl: bool = True
+    # Allow creating client without token (for shared modules that validate incoming tokens)
+    require_token: bool = True
 
     @classmethod
-    def from_env(cls) -> "ClientConfig":
-        """Build config using environment variables."""
+    def from_env(cls, *, require_token: bool = True) -> "ClientConfig":
+        """Build config using environment variables.
+        
+        Args:
+            require_token: If True (default), requires HIT_PROJECT_TOKEN or HIT_MODULE_ID_TOKEN.
+                          Set to False for shared modules that only need to validate incoming tokens.
+        """
 
         base_url = os.environ.get("PROVISIONER_URL", "").strip()
         if not base_url:
@@ -48,7 +55,10 @@ class ClientConfig:
 
         module_token = (os.environ.get("HIT_MODULE_ID_TOKEN") or "").strip() or None
         project_token = (os.environ.get("HIT_PROJECT_TOKEN") or "").strip() or None
-        if not (module_token or project_token):
+        
+        # Only require token if explicitly requested (project-specific modules)
+        # Shared modules may not have their own token - they validate incoming tokens
+        if require_token and not (module_token or project_token):
             raise ProvisionerConfigError(
                 "HIT_PROJECT_TOKEN is required for module provisioning. "
                 "Ensure your pod is injected with HIT_PROJECT_TOKEN (and optionally HIT_MODULE_ID_TOKEN)."
@@ -63,6 +73,7 @@ class ClientConfig:
             project_token=project_token,
             timeout=timeout,
             verify_ssl=verify_ssl,
+            require_token=require_token,
         )
 
     def headers(self) -> dict[str, str]:

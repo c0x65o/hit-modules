@@ -90,12 +90,14 @@ def hit_provisioner_status(
     module_name = os.getenv("HIT_MODULE_NAME", "unknown")
     
     try:
-        client = ProvisionerClient()
-        # Try a simple operation to verify connectivity
-        # We'll just verify the client can be created (it validates config on init)
+        # Use require_token=False since shared modules don't have their own token
+        client = ProvisionerClient(require_token=False)
+        # Verify connectivity with a health check
+        provisioner_healthy = client.ping()
         status_info = {
             "module": module_name,
             "provisioner_configured": True,
+            "provisioner_healthy": provisioner_healthy,
             "authenticated": True,
             "project_slug": claims.get("project_slug"),
             "environment": claims.get("environment"),
