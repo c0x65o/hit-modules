@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -49,7 +50,33 @@ def _inject_env_vars(module_name: str, config: dict[str, Any]) -> None:
 
 
 def _load_module_config(module_name: str) -> dict[str, Any]:
-    """Fetch module config from the provisioner."""
+    """Load module config from env vars or provisioner.
+    
+    Priority:
+    1. HIT_MODULE_SETTINGS env var (injected by CAC at deploy time)
+    2. Provisioner API (legacy/fallback)
+    """
+    # Check for settings injected directly by CAC deployment
+    settings_json = os.getenv("HIT_MODULE_SETTINGS")
+    features_json = os.getenv("HIT_MODULE_FEATURES")
+    
+    if settings_json or features_json:
+        config: dict[str, Any] = {"name": module_name}
+        if settings_json:
+            try:
+                config["settings"] = json.loads(settings_json)
+                logger.debug("Loaded settings from HIT_MODULE_SETTINGS env var")
+            except json.JSONDecodeError as exc:
+                logger.warning("Could not parse HIT_MODULE_SETTINGS: %s", exc)
+        if features_json:
+            try:
+                config["features"] = json.loads(features_json)
+                logger.debug("Loaded features from HIT_MODULE_FEATURES env var")
+            except json.JSONDecodeError as exc:
+                logger.warning("Could not parse HIT_MODULE_FEATURES: %s", exc)
+        return config
+    
+    # Fallback to provisioner API
     client = ProvisionerClient()
     config = client.get_module_config(module_name)
     return config or {}
