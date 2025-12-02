@@ -5,14 +5,14 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from .auth import _enforce_fastapi_auth, require_provisioned_token
 from .client import ProvisionerClient
 from .errors import ProvisionerConfigError, ProvisionerError
 from .logger import get_logger
-from .middleware import clear_config_cache, get_module_config, get_module_secrets
+from .middleware import clear_config_cache, get_module_config, get_module_config_from_request, get_module_secrets
 from .version import get_module_version, log_module_startup
 
 logger = get_logger(__name__)
@@ -55,12 +55,13 @@ def hit_version() -> dict[str, Any]:
 
 
 @_auth_router.get("/config")
-def hit_config(
-    config: dict[str, Any] = Depends(get_module_config),
-    secrets: dict[str, Any] = Depends(get_module_secrets),
+async def hit_config(
+    request: Request,
     claims: dict[str, Any] = Depends(require_provisioned_token),
 ) -> dict[str, Any]:
     """Get module configuration (requires authentication).
+    
+    Uses the request's token to fetch project-specific config from provisioner.
     
     Returns:
     - Full module config from hit.yaml (name, version, namespace, settings, etc.)
@@ -69,6 +70,10 @@ def hit_config(
     """
     module_name = os.getenv("HIT_MODULE_NAME", "unknown")
     
+    # Get config using request token for K8s dynamic lookup
+    config = await get_module_config_from_request(request)
+    secrets = config.get("secrets", {})
+    
     # Return full module config, not just settings
     # Filter out secrets block from the config for security
     config_without_secrets = {k: v for k, v in config.items() if k != "secrets"}
@@ -76,9 +81,9 @@ def hit_config(
     return {
         "module": module_name,
         "config_source": "provisioner",
-        "config": config_without_secrets,
+        "settings": config_without_secrets.get("settings", {}),
         "has_secrets": bool(secrets),
-        "authenticated_as": claims.get("project_slug"),
+        "authenticated_as": claims.get("prj"),
     }
 
 
@@ -120,7 +125,8 @@ def hit_provisioner_status(
 
 
 @_auth_router.post("/reload")
-def hit_reload_config(
+async def hit_reload_config(
+    request: Request,
     claims: dict[str, Any] = Depends(require_provisioned_token),
 ) -> dict[str, Any]:
     """Reload module configuration from provisioner.
@@ -135,9 +141,9 @@ def hit_reload_config(
     # Clear the config cache
     clear_config_cache()
     
-    # Fetch fresh config
+    # Fetch fresh config using request token
     try:
-        config = get_module_config()
+        config = await get_module_config_from_request(request)
         settings = config.get("settings", {})
         return {
             "status": "ok",

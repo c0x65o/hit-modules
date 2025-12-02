@@ -27,8 +27,37 @@ logger = get_logger(__name__)
 class DatabaseConnectionManager:
     """Provides cached SQLAlchemy engines for module databases."""
 
-    def __init__(self, client: ProvisionerClient | None = None):
-        self._client = client or ProvisionerClient()
+    def __init__(
+        self,
+        client: ProvisionerClient | None = None,
+        token: str | None = None,
+    ):
+        """Initialize database connection manager.
+        
+        Args:
+            client: Optional pre-configured provisioner client
+            token: Optional bearer token to use for provisioner requests.
+                   For shared modules, this should be the calling app's token.
+        """
+        if client:
+            self._client = client
+        else:
+            # Create client with optional token
+            from .config import ClientConfig
+            import os
+            
+            base_url = os.environ.get("PROVISIONER_URL", "").strip()
+            if base_url:
+                config = ClientConfig(
+                    base_url=base_url,
+                    project_token=token,
+                    module_token=None,
+                    require_token=False,
+                )
+                self._client = ProvisionerClient(config=config, require_token=False)
+            else:
+                # Fall back to default client (may fail if PROVISIONER_URL not set)
+                self._client = ProvisionerClient(require_token=False)
         self._engines: Dict[str, Engine] = {}
 
     def _ensure_sqlalchemy(self) -> None:

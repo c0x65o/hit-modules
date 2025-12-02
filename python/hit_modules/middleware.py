@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import os
-from functools import lru_cache
 from typing import Any
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Request
 
 from .client import ProvisionerClient
 from .errors import ProvisionerConfigError, ProvisionerError
@@ -14,17 +13,34 @@ from .logger import get_logger
 
 logger = get_logger(__name__)
 
+# Cache for module configs keyed by project_slug
+_config_cache: dict[str, dict[str, Any]] = {}
 
-@lru_cache(maxsize=1)
-def _get_provisioner_client() -> ProvisionerClient:
-    """Get cached provisioner client.
+
+def _get_provisioner_client(token: str | None = None) -> ProvisionerClient:
+    """Get provisioner client, optionally with a specific token.
     
-    Note: We don't require a token here because:
-    1. Shared modules (ping-pong, auth) don't have their own HIT_PROJECT_TOKEN
-    2. They load config on startup before any project requests arrive
-    3. For auth, they use require_provisioned_token() which validates incoming tokens
+    Args:
+        token: Optional token to use for authentication.
+               If None, creates client without token (for anonymous calls).
     """
-    return ProvisionerClient(require_token=False)
+    from .config import ClientConfig
+    
+    # Build config from environment
+    base_url = os.environ.get("PROVISIONER_URL", "").strip()
+    if not base_url:
+        raise ProvisionerConfigError(
+            "PROVISIONER_URL is required. Set it to the provisioner service URL."
+        )
+    
+    config = ClientConfig(
+        base_url=base_url,
+        project_token=token,
+        module_token=None,
+        require_token=False,  # Don't require token - we're a shared module
+    )
+    
+    return ProvisionerClient(config=config, require_token=False)
 
 
 def _get_module_name() -> str:
@@ -38,17 +54,49 @@ def _get_module_name() -> str:
     return module_name
 
 
-@lru_cache(maxsize=1)
-def _load_module_config(module_name: str) -> dict[str, Any]:
-    """Load module config from provisioner (cached)."""
+def _load_module_config(
+    module_name: str,
+    project_slug: str | None = None,
+    token: str | None = None,
+) -> dict[str, Any]:
+    """Load module config from provisioner.
+    
+    Args:
+        module_name: The module name (e.g., "ping-pong")
+        project_slug: Optional project slug for caching (from token claims)
+        token: Optional token to pass to provisioner for K8s dynamic lookup
+    
+    Returns:
+        Module configuration dict from hit.yaml
+        Includes _request_token for database credential lookups
+    """
+    # Check cache first if we have a project_slug
+    cache_key = f"{module_name}:{project_slug or 'default'}"
+    if cache_key in _config_cache:
+        logger.debug(f"Using cached config for {cache_key}")
+        cached = _config_cache[cache_key].copy()
+        # Always include the current request's token for database lookups
+        if token:
+            cached["_request_token"] = token
+        return cached
+    
     try:
-        client = _get_provisioner_client()
+        client = _get_provisioner_client(token=token)
         config = client.get_module_config(module_name)
         if not config:
-            logger.warning("Provisioner returned empty config for module %s", module_name)
-            return {}
-        logger.info("Loaded config for module %s from provisioner", module_name)
-        return config
+            logger.warning(f"Provisioner returned empty config for module {module_name}")
+            config = {}
+        else:
+            logger.info(f"Loaded config for module {module_name} (project: {project_slug or 'none'})")
+        
+        # Cache it (without token - token is added per-request)
+        _config_cache[cache_key] = config
+        
+        # Add token to returned config for database credential lookups
+        result = config.copy()
+        if token:
+            result["_request_token"] = token
+        return result
     except ProvisionerConfigError as exc:
         raise RuntimeError(
             f"Provisioner misconfigured for module {module_name}: {exc}"
@@ -64,26 +112,87 @@ def clear_config_cache() -> None:
     
     Call this after the provisioner has reloaded its config to pick up changes.
     """
-    _load_module_config.cache_clear()
+    _config_cache.clear()
     logger.info("Module config cache cleared")
 
 
-def get_module_config() -> dict[str, Any]:
-    """FastAPI dependency that provides module config from hit.yaml via provisioner.
+def _extract_bearer_token(request: Request) -> str | None:
+    """Extract Bearer token from Authorization header."""
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        return auth_header[7:]  # Remove "Bearer " prefix
+    return None
+
+
+def _decode_project_slug(token: str) -> str | None:
+    """Decode project_slug from token without full validation.
+    
+    We just need the 'prj' claim for caching and provisioner lookup.
+    Full validation happens in require_provisioned_token().
+    """
+    try:
+        import base64
+        import json
+        
+        # JWT format: header.payload.signature
+        parts = token.split(".")
+        if len(parts) != 3:
+            return None
+        
+        # Decode payload (add padding if needed)
+        payload_b64 = parts[1]
+        padding = 4 - len(payload_b64) % 4
+        if padding != 4:
+            payload_b64 += "=" * padding
+        
+        payload_json = base64.urlsafe_b64decode(payload_b64)
+        payload = json.loads(payload_json)
+        
+        return payload.get("prj")
+    except Exception:
+        return None
+
+
+async def get_module_config_from_request(request: Request) -> dict[str, Any]:
+    """FastAPI dependency that provides module config using the request's token.
     
     This dependency:
-    - Fetches config from provisioner (cached per request)
-    - Returns the full module config dict from hit.yaml
-    - Fails hard if provisioner is unavailable
+    - Extracts the token from the Authorization header (if present)
+    - Passes the token to provisioner for K8s dynamic ConfigMap lookup
+    - Caches config per-project for efficiency
+    - Falls back to default config if no token provided
     
     Usage:
         @app.get("/endpoint")
-        def my_endpoint(config: dict[str, Any] = Depends(get_module_config)):
+        async def my_endpoint(config: dict[str, Any] = Depends(get_module_config_from_request)):
             increment = config.get("settings", {}).get("increment", 1)
             ...
     """
     module_name = _get_module_name()
-    return _load_module_config(module_name)
+    
+    # Try to extract token from request
+    token = _extract_bearer_token(request)
+    project_slug = _decode_project_slug(token) if token else None
+    
+    return _load_module_config(
+        module_name=module_name,
+        project_slug=project_slug,
+        token=token,
+    )
+
+
+def get_module_config() -> dict[str, Any]:
+    """Get module config (synchronous version, for backward compatibility).
+    
+    WARNING: This function does NOT have access to the request token.
+    It's kept for backward compatibility with startup code that loads config
+    before any requests arrive. For request-time config, use get_module_config_from_request.
+    
+    In environment-wide provisioner mode, this will return empty config unless
+    hit.yaml is mounted at /etc/config/hit.yaml (local dev mode).
+    """
+    module_name = _get_module_name()
+    return _load_module_config(module_name=module_name)
 
 
 def get_module_secrets() -> dict[str, Any]:
@@ -126,4 +235,3 @@ def get_module_settings() -> dict[str, Any]:
     if not isinstance(settings, dict):
         return {}
     return settings
-
