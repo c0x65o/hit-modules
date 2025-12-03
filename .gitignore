@@ -1,1 +1,9 @@
 uv.lock
+
+# Build artifacts
+*.egg-info/
+__pycache__/
+*.pyc
+.eggs/
+dist/
+build/
