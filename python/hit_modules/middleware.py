@@ -70,6 +70,14 @@ def _load_module_config(
         Module configuration dict from hit.yaml
         Includes _request_token for database credential lookups
     """
+    # Log when no project_slug is found (potential issue)
+    if not project_slug:
+        logger.warning(
+            f"No project_slug found for module {module_name}. "
+            f"Token present: {bool(token)}. "
+            "Requests without project_slug will share config cache."
+        )
+    
     # Check cache first if we have a project_slug
     cache_key = f"{module_name}:{project_slug or 'default'}"
     if cache_key in _config_cache:
