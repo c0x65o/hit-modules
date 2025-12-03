@@ -176,6 +176,41 @@ class ProvisionerClient:
             expected_status=200,
         )
 
+    def verify_token_with_acl(
+        self,
+        token: str,
+        module_name: str,
+        method_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Validate a token and check if module/method access is allowed.
+        
+        Args:
+            token: JWT token to validate
+            module_name: Module name to check access for (e.g., "ping-pong")
+            method_name: Optional method name to check (e.g., "increment")
+            
+        Returns:
+            Dict with:
+            - valid: bool - token is valid
+            - claims: dict - decoded token claims
+            - module_allowed: bool - module access allowed
+            - method_allowed: bool - method access allowed (if method_name provided)
+            - reason: str - explanation if denied
+        """
+        payload = {
+            "token": token,
+            "moduleName": module_name,
+        }
+        if method_name:
+            payload["methodName"] = method_name
+            
+        return self._request(
+            "POST",
+            "/api/v1/tokens/validate",
+            json_body=payload,
+            expected_status=200,
+        )
+
     def get_module_config(self, module_name: str) -> dict[str, Any]:
         """Fetch module-specific configuration from the provisioner."""
 
