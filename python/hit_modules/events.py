@@ -7,16 +7,19 @@ This module provides Redis-based event pub/sub functionality:
 Usage:
     from hit_modules.events import publish_event, get_event_publisher
 
-    # Simple one-liner publish
+    # Simple one-liner publish (with project context)
+    await publish_event("counter.updated", {"id": "test", "value": 42}, project_slug="hello-world")
+
+    # Or let it auto-detect project from HIT_PROJECT_SLUG env var
     await publish_event("counter.updated", {"id": "test", "value": 42})
 
     # Or with publisher instance for batching
-    publisher = get_event_publisher()
+    publisher = get_event_publisher(project_slug="hello-world")
     await publisher.publish("counter.updated", {"id": "test", "value": 42})
 
 Environment Variables:
     REDIS_URL: Redis connection URL (default: redis://redis-master:6379)
-    HIT_EVENTS_PREFIX: Event channel prefix (default: hit:events)
+    HIT_PROJECT_SLUG: Project slug for event channel isolation
 """
 
 from __future__ import annotations
@@ -44,9 +47,21 @@ def _get_redis_url() -> str:
     return os.getenv("REDIS_URL", "redis://redis-master:6379")
 
 
-def _get_events_prefix() -> str:
-    """Get event channel prefix."""
-    return os.getenv("HIT_EVENTS_PREFIX", "hit:events")
+def _get_project_slug() -> str | None:
+    """Get project slug from environment."""
+    return os.getenv("HIT_PROJECT_SLUG")
+
+
+def _get_events_prefix(project_slug: str | None = None) -> str:
+    """Get event channel prefix with optional project isolation.
+    
+    Format: hit:events:{project_slug} or hit:events (if no project)
+    """
+    base = "hit:events"
+    project = project_slug or _get_project_slug()
+    if project:
+        return f"{base}:{project}"
+    return base
 
 
 @dataclass
@@ -95,16 +110,18 @@ class EventPublisher:
     """Redis-based event publisher for HIT modules.
     
     Thread-safe and async-compatible. Maintains a connection pool.
+    Events are isolated per project using channel prefixes.
     """
     
     def __init__(
         self,
         redis_url: str | None = None,
-        prefix: str | None = None,
+        project_slug: str | None = None,
         source_module: str | None = None,
     ):
         self._redis_url = redis_url or _get_redis_url()
-        self._prefix = prefix or _get_events_prefix()
+        self._project_slug = project_slug or _get_project_slug()
+        self._prefix = _get_events_prefix(self._project_slug)
         self._source_module = source_module or os.getenv("HIT_MODULE_NAME")
         self._redis: Any = None  # redis.asyncio.Redis
         self._connected = False
@@ -149,10 +166,14 @@ class EventPublisher:
         
         Example:
             await publisher.publish("counter.updated", {"id": "test", "value": 42})
+        
+        Channel format:
+            hit:events:{project_slug}:{event_type}
+            e.g., hit:events:hello-world:counter.updated
         """
         redis = await self._ensure_connected()
         
-        # Build full channel name: hit:events:counter.updated
+        # Build full channel name: hit:events:{project}:{event_type}
         channel = f"{self._prefix}:{event_type}"
         
         message = EventMessage(
@@ -163,9 +184,13 @@ class EventPublisher:
             correlation_id=correlation_id,
         )
         
+        # Add project to payload for tracking
+        message_dict = message.to_dict()
+        message_dict["project"] = self._project_slug
+        
         try:
-            subscribers = await redis.publish(channel, message.to_json())
-            logger.debug(f"Published event '{event_type}' to {subscribers} subscribers")
+            subscribers = await redis.publish(channel, json.dumps(message_dict))
+            logger.debug(f"Published event '{event_type}' to {channel} ({subscribers} subscribers)")
             return subscribers
         except Exception as e:
             logger.error(f"Failed to publish event '{event_type}': {e}")
@@ -347,29 +372,40 @@ class EventSubscriber:
         logger.debug("Closed subscriber Redis connection")
 
 
-# Global publisher instance (lazy-loaded)
-_global_publisher: EventPublisher | None = None
+# Global publisher instances (lazy-loaded, per project)
+_global_publishers: dict[str, EventPublisher] = {}
 
 
-def get_event_publisher() -> EventPublisher:
-    """Get or create the global event publisher instance."""
-    global _global_publisher
-    if _global_publisher is None:
-        _global_publisher = EventPublisher()
-    return _global_publisher
+def get_event_publisher(project_slug: str | None = None) -> EventPublisher:
+    """Get or create an event publisher instance.
+    
+    Args:
+        project_slug: Project slug for channel isolation (defaults to HIT_PROJECT_SLUG env)
+    
+    Returns:
+        EventPublisher instance for the project
+    """
+    project = project_slug or _get_project_slug() or "default"
+    
+    if project not in _global_publishers:
+        _global_publishers[project] = EventPublisher(project_slug=project)
+    
+    return _global_publishers[project]
 
 
 async def publish_event(
     event_type: str,
     payload: dict[str, Any],
     *,
+    project_slug: str | None = None,
     correlation_id: str | None = None,
 ) -> int:
-    """Convenience function to publish an event using the global publisher.
+    """Convenience function to publish an event.
     
     Args:
         event_type: Event type (e.g., "counter.updated")
         payload: Event payload data
+        project_slug: Project slug for channel isolation (defaults to HIT_PROJECT_SLUG env)
         correlation_id: Optional correlation ID for tracing
     
     Returns:
@@ -378,9 +414,16 @@ async def publish_event(
     Example:
         from hit_modules.events import publish_event
         
+        # With explicit project
+        await publish_event("counter.updated", {"id": "test", "value": 42}, project_slug="hello-world")
+        
+        # Or rely on HIT_PROJECT_SLUG env var
         await publish_event("counter.updated", {"id": "test", "value": 42})
+    
+    Channel format:
+        hit:events:{project_slug}:{event_type}
     """
-    publisher = get_event_publisher()
+    publisher = get_event_publisher(project_slug)
     return await publisher.publish(event_type, payload, correlation_id=correlation_id)
 
 
