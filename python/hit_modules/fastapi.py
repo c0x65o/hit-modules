@@ -78,12 +78,20 @@ async def hit_config(
     # Filter out secrets block from the config for security
     config_without_secrets = {k: v for k, v in config.items() if k != "secrets"}
     
+    # Build authenticated_as: show "project/service" if service token, else just project
+    project = claims.get("prj")
+    service = claims.get("svc")
+    if project and service:
+        authenticated_as = f"{project}/{service}"
+    else:
+        authenticated_as = project
+    
     return {
         "module": module_name,
         "config_source": "provisioner",
         "settings": config_without_secrets.get("settings", {}),
         "has_secrets": bool(secrets),
-        "authenticated_as": claims.get("prj"),
+        "authenticated_as": authenticated_as,
     }
 
 
