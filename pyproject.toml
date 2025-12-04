@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hit-modules"
-version = "1.0.20"
+version = "1.0.21"
 description = "Shared middleware utilities for HIT microservices"
 authors = [
     { name = "HIT Platform", email = "platform@hitlabs.dev" },
@@ -17,6 +17,7 @@ dependencies = [
     "python-jose>=3.3.0",
     "fastapi>=0.110.0",
     "uvicorn>=0.23.0",
+    "redis[hiredis]>=5.0.0",
 ]
 
 [project.optional-dependencies]
