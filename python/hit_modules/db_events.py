@@ -170,21 +170,39 @@ def get_trigger_sql(table_name: str, event_type: str, operations: list[str]) -> 
         operations: List of operations (INSERT, UPDATE, DELETE)
 
     Returns:
-        SQL to create the trigger
+        SQL to create the trigger (wrapped in DO block for safety)
     """
     trigger_name = f"hit_notify_{table_name}"
     ops_clause = " OR ".join(operations)
 
+    # Use DO block with exception handling to safely handle case where table
+    # might not exist yet (e.g., during concurrent schema creation)
     return f"""
-    DROP TRIGGER IF EXISTS {trigger_name} ON {table_name};
-    CREATE TRIGGER {trigger_name}
-        AFTER {ops_clause} ON {table_name}
-        FOR EACH ROW
-        EXECUTE FUNCTION hit_notify_change('{event_type}');
+    DO $$
+    BEGIN
+        -- Drop existing trigger if it exists
+        IF EXISTS (
+            SELECT 1 FROM pg_trigger 
+            WHERE tgname = '{trigger_name}'
+        ) THEN
+            DROP TRIGGER {trigger_name} ON {table_name};
+        END IF;
+        
+        -- Create the trigger (only if table exists)
+        IF EXISTS (
+            SELECT 1 FROM information_schema.tables 
+            WHERE table_name = '{table_name}'
+        ) THEN
+            CREATE TRIGGER {trigger_name}
+                AFTER {ops_clause} ON {table_name}
+                FOR EACH ROW
+                EXECUTE FUNCTION hit_notify_change('{event_type}');
+        END IF;
+    END $$;
     """
 
 
-def setup_pg_notify_triggers(engine: Engine) -> None:
+def setup_pg_notify_triggers(engine: Engine, connection: Any = None) -> None:
     """Create PostgreSQL triggers for all registered event-emitting models.
 
     This should be called after metadata.create_all() to ensure tables exist.
@@ -192,12 +210,13 @@ def setup_pg_notify_triggers(engine: Engine) -> None:
 
     Args:
         engine: SQLAlchemy engine to use for creating triggers
+        connection: Optional existing connection to use (for use within transactions)
     """
     if not _event_models:
         logger.debug("No event-emitting models registered, skipping trigger setup")
         return
 
-    with engine.connect() as conn:
+    def do_setup(conn: Any) -> None:
         # Create the generic notify function
         conn.execute(text(get_notify_function_sql()))
         logger.info("Created hit_notify_change() function")
@@ -209,10 +228,21 @@ def setup_pg_notify_triggers(engine: Engine) -> None:
                 config.event_type,
                 config.operations,
             )
-            conn.execute(text(trigger_sql))
-            logger.info(f"Created trigger for {table_name} -> {config.event_type}")
+            try:
+                conn.execute(text(trigger_sql))
+                logger.info(f"Created trigger for {table_name} -> {config.event_type}")
+            except Exception as e:
+                # Log but don't fail - trigger will be created on next call
+                logger.warning(f"Deferred trigger creation for {table_name}: {e}")
 
-        conn.commit()
+    if connection is not None:
+        # Use the existing connection (within a transaction)
+        do_setup(connection)
+    else:
+        # Create a new connection if none provided
+        with engine.connect() as conn:
+            do_setup(conn)
+            conn.commit()
 
 
 async def start_db_event_listener(
@@ -405,7 +435,7 @@ async def _handle_pg_notify(payload: str, project_slug: str | None) -> None:
         if old_data:
             event_payload["old"] = old_data
 
-        # Publish to Redis
+        # Publish via Events Module SDK (or direct Redis for events module itself)
         try:
             await publish_event(
                 event_type,
@@ -416,7 +446,7 @@ async def _handle_pg_notify(payload: str, project_slug: str | None) -> None:
                 f"Published DB event: {event_type} from {table_name} ({operation})"
             )
         except Exception as e:
-            logger.error(f"Failed to publish event to Redis: {e}")
+            logger.error(f"Failed to publish event via Events Module: {e}")
 
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON in pg_notify payload: {e}")
@@ -430,8 +460,10 @@ def _after_create(target: Any, connection: Any, **kw: Any) -> None:
     """Automatically create triggers after tables are created.
 
     This is called by SQLAlchemy after metadata.create_all().
+    Uses the existing connection to ensure triggers see uncommitted tables.
     """
     if _event_models:
         logger.debug("Setting up pg_notify triggers after table creation")
         engine = connection.engine
-        setup_pg_notify_triggers(engine)
+        # Use the existing connection to see uncommitted tables in the transaction
+        setup_pg_notify_triggers(engine, connection=connection)

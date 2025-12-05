@@ -1,7 +1,7 @@
 """Event publishing and subscription helpers for HIT modules.
 
-This module provides Redis-based event pub/sub functionality:
-- EventPublisher: For modules to publish events
+This module provides event pub/sub functionality via the Events Module:
+- EventPublisher: For modules to publish events (via Events Module HTTP API)
 - EventSubscriber: For modules to subscribe to events (server-side)
 
 Usage:
@@ -18,7 +18,8 @@ Usage:
     await publisher.publish("counter.updated", {"id": "test", "value": 42})
 
 Environment Variables:
-    REDIS_URL: Redis connection URL (default: redis://localhost:6379)
+    HIT_EVENTS_URL: Events module URL (preferred - uses HTTP API)
+    REDIS_URL: Redis connection URL (fallback for events module itself)
     HIT_PROJECT_SLUG: Project slug for event channel isolation
 """
 
@@ -42,9 +43,16 @@ EventHandler = Callable[[dict[str, Any]], None]
 AsyncEventHandler = Callable[[dict[str, Any]], Any]
 
 
-def _get_redis_url() -> str:
-    """Get Redis URL from environment."""
-    return os.getenv("REDIS_URL", "redis://localhost:6379")
+def _get_events_url() -> str | None:
+    """Get Events Module URL from environment (preferred method)."""
+    return os.getenv("HIT_EVENTS_URL")
+
+
+def _get_redis_url() -> str | None:
+    """Get Redis URL from environment (fallback for events module itself)."""
+    url = os.getenv("REDIS_URL")
+    # Don't return default - only use Redis if explicitly configured
+    return url if url else None
 
 
 def _get_project_slug() -> str | None:
@@ -113,6 +121,10 @@ class EventPublisher:
 
     Thread-safe and async-compatible. Maintains a connection pool.
     Events are isolated per project using channel prefixes.
+
+    NOTE: This class is primarily used by the Events Module itself.
+    Other modules should use the publish_event() function which routes
+    events through the Events Module HTTP API when HIT_EVENTS_URL is set.
     """
 
     def __init__(
@@ -130,6 +142,13 @@ class EventPublisher:
 
     async def _ensure_connected(self) -> Any:
         """Ensure Redis connection is established."""
+        if not self._redis_url:
+            raise RuntimeError(
+                "REDIS_URL is not configured. "
+                "Use publish_event() with HIT_EVENTS_URL for module-to-module communication, "
+                "or set REDIS_URL for direct Redis access (events module only)."
+            )
+
         if self._redis is None or not self._connected:
             try:
                 import redis.asyncio as aioredis
@@ -404,7 +423,11 @@ async def publish_event(
     project_slug: str | None = None,
     correlation_id: str | None = None,
 ) -> int:
-    """Convenience function to publish an event.
+    """Publish an event via the Events Module (preferred) or direct Redis (fallback).
+
+    This function routes events through the Events Module HTTP API when HIT_EVENTS_URL
+    is available. This is the recommended pattern for modules - only the Events Module
+    itself should connect directly to Redis.
 
     Args:
         event_type: Event type (e.g., "counter.updated")
@@ -413,7 +436,7 @@ async def publish_event(
         correlation_id: Optional correlation ID for tracing
 
     Returns:
-        Number of subscribers that received the message
+        Number of subscribers that received the message (1 if via HTTP, actual count if via Redis)
 
     Example:
         from hit_modules.events import publish_event
@@ -423,12 +446,78 @@ async def publish_event(
 
         # Or rely on HIT_PROJECT_SLUG env var
         await publish_event("counter.updated", {"id": "test", "value": 42})
-
-    Channel format:
-        hit:events:{project_slug}:{event_type}
     """
-    publisher = get_event_publisher(project_slug)
-    return await publisher.publish(event_type, payload, correlation_id=correlation_id)
+    project = project_slug or _get_project_slug() or "default"
+    events_url = _get_events_url()
+
+    # Prefer Events Module HTTP API (transparent SDK pattern)
+    if events_url:
+        return await _publish_via_http(
+            events_url, event_type, payload, project, correlation_id
+        )
+
+    # Fallback to direct Redis (only for events module itself)
+    redis_url = _get_redis_url()
+    if redis_url:
+        publisher = get_event_publisher(project_slug)
+        return await publisher.publish(
+            event_type, payload, correlation_id=correlation_id
+        )
+
+    # No publishing method available
+    logger.warning(
+        f"Cannot publish event '{event_type}': neither HIT_EVENTS_URL nor REDIS_URL is configured"
+    )
+    return 0
+
+
+async def _publish_via_http(
+    events_url: str,
+    event_type: str,
+    payload: dict[str, Any],
+    project_slug: str,
+    correlation_id: str | None = None,
+) -> int:
+    """Publish event via Events Module HTTP API.
+
+    This is the recommended pattern - modules call the Events Module SDK,
+    which handles Redis internally (like how ping-pong SDK calls ping-pong service).
+    """
+    try:
+        import httpx
+    except ImportError:
+        raise ImportError(
+            "httpx package required for events HTTP publishing. "
+            "Install with: pip install httpx"
+        )
+
+    url = f"{events_url.rstrip('/')}/publish"
+    params = {"event_type": event_type}
+    headers = {"X-HIT-Project-Slug": project_slug}
+
+    if correlation_id:
+        payload = {**payload, "correlation_id": correlation_id}
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                url, params=params, headers=headers, json=payload
+            )
+            response.raise_for_status()
+            result = response.json()
+            subscribers = result.get("subscribers", 1)
+            logger.debug(
+                f"Published event '{event_type}' via Events Module ({subscribers} subscribers)"
+            )
+            return subscribers
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            f"Events Module returned error: {e.response.status_code} - {e.response.text}"
+        )
+        raise
+    except Exception as e:
+        logger.error(f"Failed to publish event via Events Module: {e}")
+        raise
 
 
 @asynccontextmanager
