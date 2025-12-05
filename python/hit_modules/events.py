@@ -55,6 +55,67 @@ def _get_redis_url() -> str | None:
     return url if url else None
 
 
+async def check_events_health() -> dict[str, Any]:
+    """Check if the Events Module is reachable and healthy.
+
+    Returns:
+        dict with status, ok, and optional error
+
+    Example:
+        health = await check_events_health()
+        if not health["ok"]:
+            raise RuntimeError(f"Events module unhealthy: {health['error']}")
+    """
+    events_url = _get_events_url()
+
+    if not events_url:
+        return {
+            "status": "not_configured",
+            "ok": False,
+            "error": "HIT_EVENTS_URL is not configured",
+        }
+
+    try:
+        import httpx
+    except ImportError:
+        return {
+            "status": "missing_dependency",
+            "ok": False,
+            "error": "httpx package required for events health check",
+        }
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{events_url.rstrip('/')}/hit/health")
+            if response.status_code == 200:
+                return {
+                    "status": "healthy",
+                    "ok": True,
+                    "url": events_url,
+                }
+            else:
+                return {
+                    "status": "unhealthy",
+                    "ok": False,
+                    "error": f"Events module returned {response.status_code}",
+                    "url": events_url,
+                }
+    except httpx.ConnectError as e:
+        return {
+            "status": "unreachable",
+            "ok": False,
+            "error": f"Cannot connect to events module: {e}",
+            "url": events_url,
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "ok": False,
+            "error": str(e),
+            "url": events_url,
+        }
+
+
 def _get_project_slug() -> str | None:
     """Get project slug from environment."""
     return os.getenv("HIT_PROJECT_SLUG")
@@ -423,11 +484,10 @@ async def publish_event(
     project_slug: str | None = None,
     correlation_id: str | None = None,
 ) -> int:
-    """Publish an event via the Events Module (preferred) or direct Redis (fallback).
+    """Publish an event via the Events Module HTTP API.
 
-    This function routes events through the Events Module HTTP API when HIT_EVENTS_URL
-    is available. This is the recommended pattern for modules - only the Events Module
-    itself should connect directly to Redis.
+    Modules publish events through the Events Module HTTP API (HIT_EVENTS_URL).
+    Only the Events Module itself talks directly to Redis.
 
     Args:
         event_type: Event type (e.g., "counter.updated")
@@ -436,7 +496,10 @@ async def publish_event(
         correlation_id: Optional correlation ID for tracing
 
     Returns:
-        Number of subscribers that received the message (1 if via HTTP, actual count if via Redis)
+        Number of subscribers that received the message
+
+    Raises:
+        RuntimeError: If HIT_EVENTS_URL is not configured
 
     Example:
         from hit_modules.events import publish_event
@@ -450,25 +513,15 @@ async def publish_event(
     project = project_slug or _get_project_slug() or "default"
     events_url = _get_events_url()
 
-    # Prefer Events Module HTTP API (transparent SDK pattern)
-    if events_url:
-        return await _publish_via_http(
-            events_url, event_type, payload, project, correlation_id
+    if not events_url:
+        raise RuntimeError(
+            f"Cannot publish event '{event_type}': HIT_EVENTS_URL is not configured. "
+            "Modules must publish events via the Events Module HTTP API."
         )
 
-    # Fallback to direct Redis (only for events module itself)
-    redis_url = _get_redis_url()
-    if redis_url:
-        publisher = get_event_publisher(project_slug)
-        return await publisher.publish(
-            event_type, payload, correlation_id=correlation_id
-        )
-
-    # No publishing method available
-    logger.warning(
-        f"Cannot publish event '{event_type}': neither HIT_EVENTS_URL nor REDIS_URL is configured"
+    return await _publish_via_http(
+        events_url, event_type, payload, project, correlation_id
     )
-    return 0
 
 
 async def _publish_via_http(
