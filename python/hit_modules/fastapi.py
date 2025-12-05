@@ -225,10 +225,13 @@ def install_hit_modules(
     
     # Configure CORS if requested
     if cors_origins is not None:
+        # When specific origins are provided, allow credentials
+        # When empty list (allow all), credentials must be false per CORS spec
+        allow_creds = bool(cors_origins)
         app.add_middleware(
             CORSMiddleware,
             allow_origins=cors_origins if cors_origins else ["*"],
-            allow_credentials=False,
+            allow_credentials=allow_creds,
             allow_methods=["*"],
             allow_headers=["*"],
         )
