@@ -18,7 +18,7 @@ Usage:
     await publisher.publish("counter.updated", {"id": "test", "value": 42})
 
 Environment Variables:
-    REDIS_URL: Redis connection URL (default: redis://redis-master:6379)
+    REDIS_URL: Redis connection URL (default: redis://localhost:6379)
     HIT_PROJECT_SLUG: Project slug for event channel isolation
 """
 
@@ -44,7 +44,7 @@ AsyncEventHandler = Callable[[dict[str, Any]], Any]
 
 def _get_redis_url() -> str:
     """Get Redis URL from environment."""
-    return os.getenv("REDIS_URL", "redis://redis-master:6379")
+    return os.getenv("REDIS_URL", "redis://localhost:6379")
 
 
 def _get_project_slug() -> str | None:
