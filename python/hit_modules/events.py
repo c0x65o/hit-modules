@@ -54,7 +54,7 @@ def _get_project_slug() -> str | None:
 
 def _get_events_prefix(project_slug: str | None = None) -> str:
     """Get event channel prefix with optional project isolation.
-    
+
     Format: hit:events:{project_slug} or hit:events (if no project)
     """
     base = "hit:events"
@@ -67,14 +67,16 @@ def _get_events_prefix(project_slug: str | None = None) -> str:
 @dataclass
 class EventMessage:
     """Structured event message."""
-    
+
     channel: str
     event_type: str
     payload: dict[str, Any]
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
     source_module: str | None = None
     correlation_id: str | None = None
-    
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -85,11 +87,11 @@ class EventMessage:
             "source_module": self.source_module,
             "correlation_id": self.correlation_id,
         }
-    
+
     def to_json(self) -> str:
         """Serialize to JSON string."""
         return json.dumps(self.to_dict())
-    
+
     @classmethod
     def from_json(cls, data: str | bytes) -> "EventMessage":
         """Deserialize from JSON string."""
@@ -108,11 +110,11 @@ class EventMessage:
 
 class EventPublisher:
     """Redis-based event publisher for HIT modules.
-    
+
     Thread-safe and async-compatible. Maintains a connection pool.
     Events are isolated per project using channel prefixes.
     """
-    
+
     def __init__(
         self,
         redis_url: str | None = None,
@@ -125,7 +127,7 @@ class EventPublisher:
         self._source_module = source_module or os.getenv("HIT_MODULE_NAME")
         self._redis: Any = None  # redis.asyncio.Redis
         self._connected = False
-    
+
     async def _ensure_connected(self) -> Any:
         """Ensure Redis connection is established."""
         if self._redis is None or not self._connected:
@@ -136,7 +138,7 @@ class EventPublisher:
                     "redis package required for events. "
                     "Install with: pip install redis[hiredis]"
                 )
-            
+
             self._redis = aioredis.from_url(
                 self._redis_url,
                 encoding="utf-8",
@@ -144,9 +146,9 @@ class EventPublisher:
             )
             self._connected = True
             logger.debug(f"Connected to Redis at {self._redis_url}")
-        
+
         return self._redis
-    
+
     async def publish(
         self,
         event_type: str,
@@ -155,27 +157,27 @@ class EventPublisher:
         correlation_id: str | None = None,
     ) -> int:
         """Publish an event to Redis.
-        
+
         Args:
             event_type: Event type (e.g., "counter.updated", "user.created")
             payload: Event payload data
             correlation_id: Optional correlation ID for tracing
-        
+
         Returns:
             Number of subscribers that received the message
-        
+
         Example:
             await publisher.publish("counter.updated", {"id": "test", "value": 42})
-        
+
         Channel format:
             hit:events:{project_slug}:{event_type}
             e.g., hit:events:hello-world:counter.updated
         """
         redis = await self._ensure_connected()
-        
+
         # Build full channel name: hit:events:{project}:{event_type}
         channel = f"{self._prefix}:{event_type}"
-        
+
         message = EventMessage(
             channel=channel,
             event_type=event_type,
@@ -183,19 +185,21 @@ class EventPublisher:
             source_module=self._source_module,
             correlation_id=correlation_id,
         )
-        
+
         # Add project to payload for tracking
         message_dict = message.to_dict()
         message_dict["project"] = self._project_slug
-        
+
         try:
             subscribers = await redis.publish(channel, json.dumps(message_dict))
-            logger.debug(f"Published event '{event_type}' to {channel} ({subscribers} subscribers)")
+            logger.debug(
+                f"Published event '{event_type}' to {channel} ({subscribers} subscribers)"
+            )
             return subscribers
         except Exception as e:
             logger.error(f"Failed to publish event '{event_type}': {e}")
             raise
-    
+
     async def publish_batch(
         self,
         events: list[tuple[str, dict[str, Any]]],
@@ -203,16 +207,16 @@ class EventPublisher:
         correlation_id: str | None = None,
     ) -> list[int]:
         """Publish multiple events in a pipeline.
-        
+
         Args:
             events: List of (event_type, payload) tuples
             correlation_id: Shared correlation ID for all events
-        
+
         Returns:
             List of subscriber counts for each event
         """
         redis = await self._ensure_connected()
-        
+
         async with redis.pipeline() as pipe:
             for event_type, payload in events:
                 channel = f"{self._prefix}:{event_type}"
@@ -224,12 +228,12 @@ class EventPublisher:
                     correlation_id=correlation_id,
                 )
                 pipe.publish(channel, message.to_json())
-            
+
             results = await pipe.execute()
-        
+
         logger.debug(f"Published batch of {len(events)} events")
         return results
-    
+
     async def close(self) -> None:
         """Close Redis connection."""
         if self._redis is not None:
@@ -241,11 +245,11 @@ class EventPublisher:
 
 class EventSubscriber:
     """Redis-based event subscriber for server-side event handling.
-    
+
     Useful for modules that need to react to events from other modules.
     For browser/client subscriptions, use the events gateway WebSocket.
     """
-    
+
     def __init__(
         self,
         redis_url: str | None = None,
@@ -257,7 +261,7 @@ class EventSubscriber:
         self._pubsub: Any = None
         self._handlers: dict[str, list[AsyncEventHandler]] = {}
         self._running = False
-    
+
     async def _ensure_connected(self) -> Any:
         """Ensure Redis pubsub is established."""
         if self._redis is None:
@@ -268,7 +272,7 @@ class EventSubscriber:
                     "redis package required for events. "
                     "Install with: pip install redis[hiredis]"
                 )
-            
+
             self._redis = aioredis.from_url(
                 self._redis_url,
                 encoding="utf-8",
@@ -276,28 +280,28 @@ class EventSubscriber:
             )
             self._pubsub = self._redis.pubsub()
             logger.debug(f"Subscriber connected to Redis at {self._redis_url}")
-        
+
         return self._pubsub
-    
+
     async def subscribe(
         self,
         event_pattern: str,
         handler: AsyncEventHandler,
     ) -> None:
         """Subscribe to events matching a pattern.
-        
+
         Args:
             event_pattern: Event pattern (e.g., "counter.*", "user.created")
             handler: Async function to handle events
-        
+
         Example:
             async def on_counter_update(event):
                 print(f"Counter updated: {event['payload']}")
-            
+
             await subscriber.subscribe("counter.*", on_counter_update)
         """
         pubsub = await self._ensure_connected()
-        
+
         # Store handler
         full_pattern = f"{self._prefix}:{event_pattern}"
         if full_pattern not in self._handlers:
@@ -305,9 +309,9 @@ class EventSubscriber:
             # Subscribe to Redis pattern
             await pubsub.psubscribe(full_pattern)
             logger.debug(f"Subscribed to pattern: {full_pattern}")
-        
+
         self._handlers[full_pattern].append(handler)
-    
+
     async def unsubscribe(self, event_pattern: str) -> None:
         """Unsubscribe from an event pattern."""
         full_pattern = f"{self._prefix}:{event_pattern}"
@@ -316,22 +320,22 @@ class EventSubscriber:
             if self._pubsub:
                 await self._pubsub.punsubscribe(full_pattern)
             logger.debug(f"Unsubscribed from pattern: {full_pattern}")
-    
+
     async def listen(self) -> AsyncIterator[EventMessage]:
         """Async generator that yields incoming events.
-        
+
         Example:
             async for event in subscriber.listen():
                 print(f"Received: {event.event_type}")
         """
         pubsub = await self._ensure_connected()
         self._running = True
-        
+
         try:
             async for message in pubsub.listen():
                 if not self._running:
                     break
-                
+
                 if message["type"] in ("pmessage", "message"):
                     try:
                         event = EventMessage.from_json(message["data"])
@@ -340,10 +344,10 @@ class EventSubscriber:
                         logger.warning(f"Invalid event message: {e}")
         finally:
             self._running = False
-    
+
     async def run(self) -> None:
         """Run the subscriber, dispatching events to handlers.
-        
+
         Call this as a background task:
             asyncio.create_task(subscriber.run())
         """
@@ -359,7 +363,7 @@ class EventSubscriber:
                                 await result
                         except Exception as e:
                             logger.error(f"Event handler error: {e}")
-    
+
     async def close(self) -> None:
         """Close subscriber and Redis connection."""
         self._running = False
@@ -378,18 +382,18 @@ _global_publishers: dict[str, EventPublisher] = {}
 
 def get_event_publisher(project_slug: str | None = None) -> EventPublisher:
     """Get or create an event publisher instance.
-    
+
     Args:
         project_slug: Project slug for channel isolation (defaults to HIT_PROJECT_SLUG env)
-    
+
     Returns:
         EventPublisher instance for the project
     """
     project = project_slug or _get_project_slug() or "default"
-    
+
     if project not in _global_publishers:
         _global_publishers[project] = EventPublisher(project_slug=project)
-    
+
     return _global_publishers[project]
 
 
@@ -401,25 +405,25 @@ async def publish_event(
     correlation_id: str | None = None,
 ) -> int:
     """Convenience function to publish an event.
-    
+
     Args:
         event_type: Event type (e.g., "counter.updated")
         payload: Event payload data
         project_slug: Project slug for channel isolation (defaults to HIT_PROJECT_SLUG env)
         correlation_id: Optional correlation ID for tracing
-    
+
     Returns:
         Number of subscribers that received the message
-    
+
     Example:
         from hit_modules.events import publish_event
-        
+
         # With explicit project
         await publish_event("counter.updated", {"id": "test", "value": 42}, project_slug="hello-world")
-        
+
         # Or rely on HIT_PROJECT_SLUG env var
         await publish_event("counter.updated", {"id": "test", "value": 42})
-    
+
     Channel format:
         hit:events:{project_slug}:{event_type}
     """
@@ -432,7 +436,7 @@ async def event_publisher_context(
     redis_url: str | None = None,
 ) -> AsyncIterator[EventPublisher]:
     """Context manager for a dedicated event publisher.
-    
+
     Example:
         async with event_publisher_context() as publisher:
             await publisher.publish("event", {"data": "value"})
@@ -442,4 +446,3 @@ async def event_publisher_context(
         yield publisher
     finally:
         await publisher.close()
-
