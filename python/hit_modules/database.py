@@ -129,6 +129,18 @@ class DatabaseConnectionManager:
             namespace=namespace, secret_key=secret_key, role=role
         )
         logger.info("Creating SQLAlchemy engine for %s", key)
+        # Configure reasonable pool limits for shared databases
+        # Default pool_size=5 and max_overflow=10 is too aggressive for shared clusters
+        pool_defaults = {
+            "pool_size": 2,       # Only 2 connections in the main pool
+            "max_overflow": 3,    # Allow 3 temporary connections (5 total max)
+            "pool_timeout": 30,   # Wait up to 30s for a connection
+            "pool_recycle": 1800, # Recycle connections after 30 minutes
+        }
+        # Allow overrides from caller, but apply sane defaults
+        for pool_key, pool_value in pool_defaults.items():
+            engine_kwargs.setdefault(pool_key, pool_value)
+        
         engine = create_engine(db_url, pool_pre_ping=True, **engine_kwargs)  # type: ignore[arg-type]
         self._engines[key] = engine
         return engine
