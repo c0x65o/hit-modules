@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hit-modules"
-version = "1.0.24"
+version = "1.0.25"
 description = "Shared middleware utilities for HIT microservices"
 authors = [
     { name = "HIT Platform", email = "platform@hitlabs.dev" },
@@ -18,13 +18,11 @@ dependencies = [
     "fastapi>=0.110.0",
     "uvicorn>=0.23.0",
     "redis[hiredis]>=5.0.0",
-]
-
-[project.optional-dependencies]
-sqlalchemy = [
     "SQLAlchemy>=2.0.0",
     "psycopg[binary]>=3.1.0",  # PostgreSQL driver for postgresql+psycopg:// URLs
 ]
+
+[project.optional-dependencies]
 dev = [
     "pytest>=7.4.0",
     "httpx>=0.26.0",
