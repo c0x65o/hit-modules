@@ -235,8 +235,8 @@ async def start_db_event_listener(
             yield
             task.cancel()
     """
-    # Get connection URL from engine
-    db_url = str(engine.url)
+    # Get connection URL from engine (with actual password, not masked)
+    db_url = engine.url.render_as_string(hide_password=False)
 
     # Parse SQLAlchemy URL
     # Format: postgresql://user:pass@host:port/dbname or postgresql+psycopg://...
