@@ -220,7 +220,7 @@ async def start_db_event_listener(
     """Start listening for PostgreSQL NOTIFY events and publish to Redis.
     
     This is a long-running async task that should be started in your app's lifespan.
-    It uses raw psycopg2/psycopg connection for LISTEN/NOTIFY support.
+    Supports both psycopg (v3, async-native) and psycopg2 (v2, sync with select).
     
     Args:
         engine: SQLAlchemy engine (used to get connection params)
@@ -236,17 +236,63 @@ async def start_db_event_listener(
     # Get connection URL from engine
     db_url = str(engine.url)
     
-    # Import psycopg2 for raw LISTEN support
-    try:
-        import psycopg2
-    except ImportError:
-        logger.error("psycopg2 required for db_events. Install with: pip install psycopg2-binary")
-        return
-    
-    # Parse SQLAlchemy URL for psycopg2
-    # Format: postgresql://user:pass@host:port/dbname
+    # Parse SQLAlchemy URL
+    # Format: postgresql://user:pass@host:port/dbname or postgresql+psycopg://...
     from urllib.parse import urlparse
     parsed = urlparse(db_url)
+    
+    # Build connection string for psycopg
+    conn_str = f"host={parsed.hostname} port={parsed.port or 5432} user={parsed.username} password={parsed.password} dbname={parsed.path.lstrip('/')}"
+    
+    logger.info(f"Starting PostgreSQL event listener on {parsed.hostname}:{parsed.port or 5432}/{parsed.path.lstrip('/')}")
+    
+    # Try psycopg3 first (async-native), then fall back to psycopg2
+    try:
+        import psycopg
+        await _start_psycopg3_listener(conn_str, project_slug)
+    except ImportError:
+        try:
+            import psycopg2
+            await _start_psycopg2_listener(parsed, project_slug)
+        except ImportError:
+            logger.error("Either psycopg (v3) or psycopg2 is required for db_events. Install with: pip install 'psycopg[binary]' or pip install psycopg2-binary")
+
+
+async def _start_psycopg3_listener(conn_str: str, project_slug: str | None) -> None:
+    """Start listener using psycopg v3 (async-native)."""
+    import psycopg
+    
+    retry_delay = 1.0
+    max_retry_delay = 30.0
+    
+    while True:
+        try:
+            # psycopg v3 with async support
+            async with await psycopg.AsyncConnection.connect(conn_str, autocommit=True) as conn:
+                logger.info(f"Listening on channel: {PG_NOTIFY_CHANNEL} (psycopg3)")
+                
+                # Reset retry delay on successful connection
+                retry_delay = 1.0
+                
+                # Subscribe to notifications
+                await conn.execute(f"LISTEN {PG_NOTIFY_CHANNEL}")
+                
+                # Listen for notifications (async generator)
+                async for notify in conn.notifies():
+                    await _handle_pg_notify(notify.payload, project_slug)
+                    
+        except asyncio.CancelledError:
+            logger.info("PostgreSQL event listener cancelled")
+            break
+        except Exception as e:
+            logger.error(f"PostgreSQL listener error: {e}")
+            await asyncio.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, max_retry_delay)
+
+
+async def _start_psycopg2_listener(parsed: Any, project_slug: str | None) -> None:
+    """Start listener using psycopg2 (sync with select)."""
+    import psycopg2
     
     conn_params = {
         "host": parsed.hostname,
@@ -255,8 +301,6 @@ async def start_db_event_listener(
         "password": parsed.password,
         "dbname": parsed.path.lstrip("/"),
     }
-    
-    logger.info(f"Starting PostgreSQL event listener on {conn_params['host']}:{conn_params['port']}/{conn_params['dbname']}")
     
     retry_delay = 1.0
     max_retry_delay = 30.0
@@ -270,7 +314,7 @@ async def start_db_event_listener(
             
             cursor = conn.cursor()
             cursor.execute(f"LISTEN {PG_NOTIFY_CHANNEL};")
-            logger.info(f"Listening on channel: {PG_NOTIFY_CHANNEL}")
+            logger.info(f"Listening on channel: {PG_NOTIFY_CHANNEL} (psycopg2)")
             
             # Reset retry delay on successful connection
             retry_delay = 1.0
@@ -340,7 +384,7 @@ async def _handle_pg_notify(payload: str, project_slug: str | None) -> None:
         # Use field names that match what frontends expect
         event_payload = {
             **row_data,  # Include all filtered row data at top level
-            "operation": operation.lower(),
+            "action": operation.lower(),  # Frontends expect 'action' not 'operation'
         }
         
         # For counter updates, map 'id' to 'counter_id' for frontend compatibility
