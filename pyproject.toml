@@ -20,6 +20,7 @@ dependencies = [
     "redis[hiredis]>=5.0.0",
     "SQLAlchemy>=2.0.0",
     "psycopg[binary]>=3.1.0",  # PostgreSQL driver for postgresql+psycopg:// URLs
+    "httpx>=0.25.0",  # HTTP client for Events Module API publishing
 ]
 
 [project.optional-dependencies]
