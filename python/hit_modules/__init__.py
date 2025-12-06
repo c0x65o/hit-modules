@@ -25,6 +25,12 @@ from .db_events import (
     setup_pg_notify_triggers,
     start_db_event_listener,
 )
+from .auto_events import (
+    install_auto_events,
+    install_auto_events_from_config,
+    auto_publish_all,
+    AutoEventsConfig,
+)
 from .fastapi import create_hit_app, install_hit_modules
 from .middleware import get_module_config, get_module_config_from_request, get_module_secrets, get_module_settings
 from .auth import require_provisioned_token
@@ -48,12 +54,17 @@ __all__ = [
     "get_event_publisher",
     "publish_event",
     "event_publisher_context",
-    # DB Events (auto-publish on database changes)
+    # DB Events (PostgreSQL trigger-based, legacy)
     "EventEmittingBase",
     "EventModelConfig",
     "emit_events",
     "setup_pg_notify_triggers",
     "start_db_event_listener",
+    # Auto Events (SQLAlchemy hook-based, recommended)
+    "install_auto_events",
+    "install_auto_events_from_config",
+    "auto_publish_all",
+    "AutoEventsConfig",
     # Auth
     "require_provisioned_token",
     # FastAPI integration
