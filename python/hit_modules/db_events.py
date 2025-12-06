@@ -270,12 +270,18 @@ async def start_db_event_listener(
 
     # Parse SQLAlchemy URL
     # Format: postgresql://user:pass@host:port/dbname or postgresql+psycopg://...
-    from urllib.parse import urlparse
+    from urllib.parse import urlparse, unquote
 
     parsed = urlparse(db_url)
-
-    # Build connection string for psycopg
-    conn_str = f"host={parsed.hostname} port={parsed.port or 5432} user={parsed.username} password={parsed.password} dbname={parsed.path.lstrip('/')}"
+    
+    # Build connection params dict for psycopg3 (handles special chars in password)
+    conn_params = {
+        "host": parsed.hostname,
+        "port": parsed.port or 5432,
+        "user": parsed.username,
+        "password": unquote(parsed.password) if parsed.password else "",
+        "dbname": parsed.path.lstrip("/"),
+    }
 
     logger.info(
         f"Starting PostgreSQL event listener on {parsed.hostname}:{parsed.port or 5432}/{parsed.path.lstrip('/')}"
@@ -285,7 +291,7 @@ async def start_db_event_listener(
     try:
         import psycopg
 
-        await _start_psycopg3_listener(conn_str, project_slug)
+        await _start_psycopg3_listener(conn_params, project_slug)
     except ImportError:
         try:
             import psycopg2
@@ -297,8 +303,13 @@ async def start_db_event_listener(
             )
 
 
-async def _start_psycopg3_listener(conn_str: str, project_slug: str | None) -> None:
-    """Start listener using psycopg v3 (async-native)."""
+async def _start_psycopg3_listener(conn_params: dict[str, Any], project_slug: str | None) -> None:
+    """Start listener using psycopg v3 (async-native).
+    
+    Args:
+        conn_params: Connection parameters dict with host, port, user, password, dbname
+        project_slug: Project slug for event channel isolation
+    """
     import psycopg
 
     retry_delay = 1.0
@@ -306,9 +317,10 @@ async def _start_psycopg3_listener(conn_str: str, project_slug: str | None) -> N
 
     while True:
         try:
-            # psycopg v3 with async support
+            # psycopg v3 with async support - use keyword args for proper handling
             async with await psycopg.AsyncConnection.connect(
-                conn_str, autocommit=True
+                autocommit=True,
+                **conn_params
             ) as conn:
                 logger.info(f"Listening on channel: {PG_NOTIFY_CHANNEL} (psycopg3)")
 
@@ -319,6 +331,7 @@ async def _start_psycopg3_listener(conn_str: str, project_slug: str | None) -> N
                 await conn.execute(f"LISTEN {PG_NOTIFY_CHANNEL}")
 
                 # Listen for notifications (async generator)
+                # Use timeout to periodically check for cancellation
                 async for notify in conn.notifies():
                     await _handle_pg_notify(notify.payload, project_slug)
 
