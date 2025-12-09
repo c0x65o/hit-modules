@@ -24,7 +24,15 @@ _public_router = APIRouter(prefix="/hit", tags=["hit"])
 _auth_router = APIRouter(prefix="/hit", tags=["hit"])
 
 
-@_public_router.get("/health")
+def _health_check_response() -> dict[str, Any]:
+    """Shared health check response."""
+    module_name = os.getenv("HIT_MODULE_NAME", "unknown")
+    return {
+        "status": "healthy",
+        "module": module_name,
+    }
+
+@_public_router.get("/healthz")
 def hit_health_check() -> dict[str, Any]:
     """Health check endpoint that verifies basic module status.
     
@@ -33,11 +41,7 @@ def hit_health_check() -> dict[str, Any]:
     - Does NOT require authentication (for K8s probes)
     - Does NOT verify provisioner connectivity (to avoid probe failures)
     """
-    module_name = os.getenv("HIT_MODULE_NAME", "unknown")
-    return {
-        "status": "healthy",
-        "module": module_name,
-    }
+    return _health_check_response()
 
 
 @_public_router.get("/version")
@@ -177,7 +181,7 @@ def install_hit_modules(
     
     This function:
     - Enforces bearer token authentication on all routes (unless disabled)
-    - Adds shared HIT routes (/hit/health, /hit/version, /hit/config, /hit/provisioner)
+    - Adds shared HIT routes (/hit/healthz, /hit/version, /hit/config, /hit/provisioner)
     - Configures CORS (optional)
     - Logs module startup
     
@@ -208,9 +212,15 @@ def install_hit_modules(
     
     # Mount shared routes BEFORE enforcing auth (so public routes don't inherit auth requirement)
     if include_routes:
+        # Add root-level /healthz for K8s probes (standardized health endpoint)
+        @app.get("/healthz")
+        def root_healthz() -> dict[str, Any]:
+            """Root-level health check endpoint for Kubernetes probes."""
+            return _health_check_response()
+        
         # Mount public routes first (these won't require auth)
         app.include_router(_public_router)
-        logger.info("Public HIT routes mounted: /hit/health, /hit/version")
+        logger.info("Public HIT routes mounted: /healthz, /hit/healthz, /hit/version")
     
     # Enforce authentication (unless disabled)
     # This adds a dependency to app.router, which affects routes registered AFTER this point
