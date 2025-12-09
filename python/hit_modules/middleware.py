@@ -57,35 +57,60 @@ def _get_module_name() -> str:
 def _load_module_config(
     module_name: str,
     project_slug: str | None = None,
+    service_name: str | None = None,
     token: str | None = None,
 ) -> dict[str, Any]:
     """Load module config from provisioner.
 
     Args:
         module_name: The module name (e.g., "ping-pong")
-        project_slug: Optional project slug for caching (from token claims)
-        token: Optional token to pass to provisioner for K8s dynamic lookup
+        project_slug: Project slug from token claims (required for service tokens)
+        service_name: Service name from token claims (required for service tokens)
+        token: Service token to pass to provisioner for K8s dynamic lookup
 
     Returns:
         Module configuration dict from hit.yaml
-        Includes _request_token for database credential lookups
+        Includes _request_token, _project_slug, and _service_name for database credential lookups
+
+    Raises:
+        RuntimeError: If service token is missing or invalid (missing prj or svc claims)
     """
-    # Log when no project_slug is found (potential issue)
-    if not project_slug:
-        logger.warning(
-            f"No project_slug found for module {module_name}. "
-            f"Token present: {bool(token)}. "
-            "Requests without project_slug will share config cache."
+    # Require both project_slug and service_name for service tokens
+    # Legacy project-only tokens are no longer supported
+    if token and (not project_slug or not service_name):
+        claims = _decode_token_claims(token) if token else None
+        has_prj = bool(claims.get("prj") if claims else None)
+        has_svc = bool(claims.get("svc") if claims else None)
+
+        raise RuntimeError(
+            f"Invalid service token for module {module_name}. "
+            f"Service tokens must have both 'prj' (project) and 'svc' (service) claims. "
+            f"Token has prj: {has_prj}, svc: {has_svc}. "
+            f"Legacy project-only tokens are no longer supported. "
+            f"Ensure the calling service sends a valid service token with both claims."
         )
 
-    # Check cache first if we have a project_slug
-    cache_key = f"{module_name}:{project_slug or 'default'}"
+    # Log when no project_slug/service is found (should not happen with service tokens)
+    if not project_slug or not service_name:
+        logger.warning(
+            f"No project_slug or service_name found for module {module_name}. "
+            f"Token present: {bool(token)}. "
+            "This may indicate a missing or invalid service token."
+        )
+
+    # Check cache first if we have both project_slug and service_name
+    # Cache key includes service because different services can have different configs
+    cache_key = f"{module_name}:{project_slug or 'default'}:{service_name or 'default'}"
     if cache_key in _config_cache:
         logger.debug(f"Using cached config for {cache_key}")
         cached = _config_cache[cache_key].copy()
         # Always include the current request's token for database lookups
         if token:
             cached["_request_token"] = token
+        if project_slug:
+            cached["_project_slug"] = project_slug
+        if service_name:
+            cached["_service_name"] = service_name
         return cached
 
     try:
@@ -98,19 +123,22 @@ def _load_module_config(
             config = {}
         else:
             logger.info(
-                f"Loaded config for module {module_name} (project: {project_slug or 'none'})"
+                f"Loaded config for module {module_name} "
+                f"(project: {project_slug or 'none'}, service: {service_name or 'none'})"
             )
 
         # Cache it (without token - token is added per-request)
         _config_cache[cache_key] = config
 
-        # Add token and project_slug to returned config for database credential lookups
+        # Add token, project_slug, and service_name to returned config for database credential lookups
         # and debugging when config is empty
         result = config.copy()
         if token:
             result["_request_token"] = token
         if project_slug:
             result["_project_slug"] = project_slug
+        if service_name:
+            result["_service_name"] = service_name
         return result
     except ProvisionerConfigError as exc:
         raise RuntimeError(
@@ -155,11 +183,14 @@ def _extract_bearer_token(request: Request) -> str | None:
     return None
 
 
-def _decode_project_slug(token: str) -> str | None:
-    """Decode project_slug from token without full validation.
+def _decode_token_claims(token: str) -> dict[str, Any] | None:
+    """Decode token claims without full validation.
 
-    We just need the 'prj' claim for caching and provisioner lookup.
+    We just need the 'prj' and 'svc' claims for caching and provisioner lookup.
     Full validation happens in require_provisioned_token().
+
+    Returns:
+        Dict with 'prj' and 'svc' claims, or None if token is invalid
     """
     try:
         import base64
@@ -179,19 +210,26 @@ def _decode_project_slug(token: str) -> str | None:
         payload_json = base64.urlsafe_b64decode(payload_b64)
         payload = json.loads(payload_json)
 
-        return payload.get("prj")
+        return payload
     except Exception:
         return None
 
 
+def _decode_project_slug(token: str) -> str | None:
+    """Decode project_slug from token (legacy - use _decode_token_claims instead)."""
+    claims = _decode_token_claims(token)
+    return claims.get("prj") if claims else None
+
+
 async def get_module_config_from_request(request: Request) -> dict[str, Any]:
-    """FastAPI dependency that provides module config using the request's token.
+    """FastAPI dependency that provides module config using the request's service token.
 
     This dependency:
-    - Extracts the token from the Authorization header (if present)
+    - Extracts the service token from X-HIT-Service-Token or Authorization header
+    - Validates that the token has both 'prj' (project) and 'svc' (service) claims
     - Passes the token to provisioner for K8s dynamic ConfigMap lookup
-    - Caches config per-project for efficiency
-    - Falls back to default config if no token provided
+    - Caches config per-project+service for efficiency
+    - Requires a valid service token (legacy project-only tokens not supported)
 
     Usage:
         @app.get("/endpoint")
@@ -201,13 +239,40 @@ async def get_module_config_from_request(request: Request) -> dict[str, Any]:
     """
     module_name = _get_module_name()
 
-    # Try to extract token from request
+    # Try to extract service token from request
     token = _extract_bearer_token(request)
-    project_slug = _decode_project_slug(token) if token else None
+
+    if not token:
+        raise RuntimeError(
+            f"Service token required for module {module_name}. "
+            f"Requests must include X-HIT-Service-Token header or Authorization: Bearer <service_token>. "
+            f"Service tokens must have both 'prj' (project) and 'svc' (service) claims."
+        )
+
+    # Decode token claims to extract project_slug and service_name
+    claims = _decode_token_claims(token)
+    if not claims:
+        raise RuntimeError(
+            f"Invalid token format for module {module_name}. "
+            f"Token must be a valid JWT with 'prj' and 'svc' claims."
+        )
+
+    project_slug = claims.get("prj")
+    service_name = claims.get("svc")
+
+    # Require both project_slug and service_name - service tokens always have both
+    if not project_slug or not service_name:
+        raise RuntimeError(
+            f"Service token missing required claims for module {module_name}. "
+            f"Service tokens must have both 'prj' (project slug) and 'svc' (service name) claims. "
+            f"Token has prj: {bool(project_slug)}, svc: {bool(service_name)}. "
+            f"Legacy project-only tokens are no longer supported."
+        )
 
     return _load_module_config(
         module_name=module_name,
         project_slug=project_slug,
+        service_name=service_name,
         token=token,
     )
 
