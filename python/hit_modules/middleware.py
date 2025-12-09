@@ -104,10 +104,13 @@ def _load_module_config(
         # Cache it (without token - token is added per-request)
         _config_cache[cache_key] = config
 
-        # Add token to returned config for database credential lookups
+        # Add token and project_slug to returned config for database credential lookups
+        # and debugging when config is empty
         result = config.copy()
         if token:
             result["_request_token"] = token
+        if project_slug:
+            result["_project_slug"] = project_slug
         return result
     except ProvisionerConfigError as exc:
         raise RuntimeError(
