@@ -66,6 +66,13 @@ class DatabaseConnectionManager:
                 "SQLAlchemy is required for DatabaseConnectionManager but is not installed. "
                 "Install hit-modules with the `sqlalchemy` extra or add SQLAlchemy to your project."
             )
+        # Ensure psycopg3 is imported so SQLAlchemy recognizes postgresql+psycopg:// URLs
+        # This prevents SQLAlchemy from falling back to psycopg2
+        try:
+            import psycopg  # psycopg3 - import to register with SQLAlchemy
+        except ImportError:
+            # psycopg3 not available - will use psycopg2 if URL specifies it
+            pass
 
     def get_database_url(
         self,
@@ -128,6 +135,26 @@ class DatabaseConnectionManager:
         db_url = self.get_database_url(
             namespace=namespace, secret_key=secret_key, role=role
         )
+        
+        # Ensure PostgreSQL URLs use psycopg3 (psycopg) driver, not psycopg2
+        # SQLAlchemy may fall back to psycopg2 if psycopg3 isn't properly detected
+        if db_url.startswith("postgresql://") or db_url.startswith("postgres://"):
+            # Check if psycopg3 is available
+            try:
+                import psycopg  # psycopg3
+                # Normalize to use psycopg3 driver
+                if db_url.startswith("postgresql://") and "+" not in db_url.split("://")[0]:
+                    db_url = db_url.replace("postgresql://", "postgresql+psycopg://", 1)
+                elif db_url.startswith("postgres://"):
+                    db_url = db_url.replace("postgres://", "postgresql+psycopg://", 1)
+            except ImportError:
+                # psycopg3 not available, but URL should already specify driver
+                pass
+        
+        # Also normalize if URL has psycopg2 to use psycopg3 instead
+        if "postgresql+psycopg2://" in db_url:
+            db_url = db_url.replace("postgresql+psycopg2://", "postgresql+psycopg://", 1)
+        
         logger.info("Creating SQLAlchemy engine for %s", key)
         # Configure reasonable pool limits for shared databases
         # Default pool_size=5 and max_overflow=10 is too aggressive for shared clusters
