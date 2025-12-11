@@ -33,7 +33,7 @@ class DatabaseConnectionManager:
         token: str | None = None,
     ):
         """Initialize database connection manager.
-        
+
         Args:
             client: Optional pre-configured provisioner client
             token: Optional bearer token to use for provisioner requests.
@@ -43,9 +43,10 @@ class DatabaseConnectionManager:
             self._client = client
         else:
             # Create client with optional token
-            from .config import ClientConfig
             import os
-            
+
+            from .config import ClientConfig
+
             base_url = os.environ.get("PROVISIONER_URL", "").strip()
             if base_url:
                 config = ClientConfig(
@@ -141,39 +142,45 @@ class DatabaseConnectionManager:
         db_url = self.get_database_url(
             namespace=namespace, secret_key=secret_key, role=role
         )
-        
+
         # Ensure PostgreSQL URLs use psycopg3 (psycopg) driver, not psycopg2
         # SQLAlchemy may fall back to psycopg2 if psycopg3 isn't properly detected
         if db_url.startswith("postgresql://") or db_url.startswith("postgres://"):
             # Check if psycopg3 is available
             try:
                 import psycopg  # psycopg3
+
                 # Normalize to use psycopg3 driver
-                if db_url.startswith("postgresql://") and "+" not in db_url.split("://")[0]:
+                if (
+                    db_url.startswith("postgresql://")
+                    and "+" not in db_url.split("://")[0]
+                ):
                     db_url = db_url.replace("postgresql://", "postgresql+psycopg://", 1)
                 elif db_url.startswith("postgres://"):
                     db_url = db_url.replace("postgres://", "postgresql+psycopg://", 1)
             except ImportError:
                 # psycopg3 not available, but URL should already specify driver
                 pass
-        
+
         # Also normalize if URL has psycopg2 to use psycopg3 instead
         if "postgresql+psycopg2://" in db_url:
-            db_url = db_url.replace("postgresql+psycopg2://", "postgresql+psycopg://", 1)
-        
+            db_url = db_url.replace(
+                "postgresql+psycopg2://", "postgresql+psycopg://", 1
+            )
+
         logger.info("Creating SQLAlchemy engine for %s", key)
         # Configure reasonable pool limits for shared databases
         # Default pool_size=5 and max_overflow=10 is too aggressive for shared clusters
         pool_defaults = {
-            "pool_size": 2,       # Only 2 connections in the main pool
-            "max_overflow": 3,    # Allow 3 temporary connections (5 total max)
-            "pool_timeout": 30,   # Wait up to 30s for a connection
-            "pool_recycle": 1800, # Recycle connections after 30 minutes
+            "pool_size": 2,  # Only 2 connections in the main pool
+            "max_overflow": 3,  # Allow 3 temporary connections (5 total max)
+            "pool_timeout": 30,  # Wait up to 30s for a connection
+            "pool_recycle": 1800,  # Recycle connections after 30 minutes
         }
         # Allow overrides from caller, but apply sane defaults
         for pool_key, pool_value in pool_defaults.items():
             engine_kwargs.setdefault(pool_key, pool_value)
-        
+
         engine = create_engine(db_url, pool_pre_ping=True, **engine_kwargs)  # type: ignore[arg-type]
         self._engines[key] = engine
         return engine
