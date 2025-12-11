@@ -36,29 +36,50 @@ class DatabaseConnectionManager:
 
         Args:
             client: Optional pre-configured provisioner client
-            token: Optional bearer token to use for provisioner requests.
-                   For shared modules, this should be the calling app's token.
+            token: Bearer token to use for provisioner requests (REQUIRED for shared modules).
+                   This should be the calling service's token from the request.
         """
+        import os
+        from .config import ClientConfig
+
         self._token = token
+        token_preview = token[:30] + "..." if token and len(token) > 30 else token or "None"
+        
+        logger.info(
+            f"DatabaseConnectionManager.__init__: token_provided={bool(token)}, "
+            f"token_preview={token_preview}, client_provided={bool(client)}"
+        )
+        
         if client:
             self._client = client
+            logger.debug("Using provided ProvisionerClient")
         else:
-            # Create client with the provided token
-            import os
-
-            from .config import ClientConfig
-
             base_url = os.environ.get("PROVISIONER_URL", "").strip()
-            if base_url:
-                config = ClientConfig(
-                    base_url=base_url,
-                    module_token=token,  # Use the provided token for auth
-                    require_token=False,
+            logger.debug(f"Creating new ProvisionerClient: base_url={base_url or 'NOT SET'}")
+            
+            if not base_url:
+                raise DatabaseConnectionError(
+                    "PROVISIONER_URL is required for database connections. "
+                    "Set PROVISIONER_URL to the provisioner service URL."
                 )
-                self._client = ProvisionerClient(config=config, require_token=False)
-            else:
-                # Fall back to default client (may fail if PROVISIONER_URL not set)
-                self._client = ProvisionerClient(require_token=False)
+            
+            config = ClientConfig(
+                base_url=base_url,
+                module_token=token,  # Use the provided token for auth
+                require_token=False,
+            )
+            
+            # Verify token was set in config
+            if token and not config.module_token:
+                logger.error(f"Token was passed but not set in ClientConfig!")
+            
+            logger.debug(
+                f"ClientConfig created: base_url={config.base_url}, "
+                f"module_token_set={bool(config.module_token)}"
+            )
+            
+            self._client = ProvisionerClient(config=config, require_token=False)
+        
         self._engines: Dict[str, Engine] = {}
 
     def _ensure_sqlalchemy(self) -> None:
