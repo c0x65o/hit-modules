@@ -39,10 +39,11 @@ class DatabaseConnectionManager:
             token: Optional bearer token to use for provisioner requests.
                    For shared modules, this should be the calling app's token.
         """
+        self._token = token
         if client:
             self._client = client
         else:
-            # Create client with optional token
+            # Create client with the provided token
             import os
 
             from .config import ClientConfig
@@ -51,7 +52,7 @@ class DatabaseConnectionManager:
             if base_url:
                 config = ClientConfig(
                     base_url=base_url,
-                    module_token=None,
+                    module_token=token,  # Use the provided token for auth
                     require_token=False,
                 )
                 self._client = ProvisionerClient(config=config, require_token=False)
