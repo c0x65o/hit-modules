@@ -337,7 +337,12 @@ async def get_module_config_from_request(request: Request) -> dict[str, Any]:
     - Validates that the token has both 'prj' (project) and 'svc' (service) claims
     - Passes the token to provisioner for K8s dynamic ConfigMap lookup
     - Caches config per-project+service for efficiency
-    - Requires a valid service token (legacy project-only tokens not supported)
+    - Works with both service tokens and user JWTs (when proxy adds service token)
+
+    When a user JWT is present (user-facing requests):
+    - The proxy should add X-HIT-Service-Token header
+    - If service token is missing, falls back to extracting from user JWT if it has prj/svc claims
+    - Otherwise raises an error (proxy should always add service token)
 
     Usage:
         @app.get("/endpoint")
@@ -347,20 +352,48 @@ async def get_module_config_from_request(request: Request) -> dict[str, Any]:
     """
     module_name = _get_module_name()
 
-    # Use the centralized token extraction
-    token = await get_service_token(request)
+    # Try to get service token first (preferred - proxy should add this)
+    try:
+        token = await get_service_token(request)
+        claims = _decode_token_claims(token)
+        project_slug = claims.get("prj")
+        service_name = claims.get("svc")
+        
+        if project_slug and service_name:
+            return _load_module_config(
+                module_name=module_name,
+                project_slug=project_slug,
+                service_name=service_name,
+                token=token,
+            )
+    except RuntimeError:
+        # No service token found - check if we have a user JWT that might have prj/svc claims
+        pass
 
-    # Decode token claims to extract project_slug and service_name
-    claims = _decode_token_claims(token)
-    project_slug = claims.get("prj")
-    service_name = claims.get("svc")
+    # Fallback: Check if Authorization header has a token with prj/svc claims
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        user_token = auth_header[7:]
+        user_claims = _decode_token_claims(user_token)
+        if user_claims:
+            project_slug = user_claims.get("prj")
+            service_name = user_claims.get("svc")
+            if project_slug and service_name:
+                # User JWT has prj/svc claims - use it for config lookup
+                return _load_module_config(
+                    module_name=module_name,
+                    project_slug=project_slug,
+                    service_name=service_name,
+                    token=user_token,
+                )
 
-    # Load config (token already validated by get_service_token)
-    return _load_module_config(
-        module_name=module_name,
-        project_slug=project_slug,
-        service_name=service_name,
-        token=token,
+    # No valid token found - this should not happen if proxy is working correctly
+    raise RuntimeError(
+        "Cannot determine project/service for config lookup. "
+        "Requests must include either: "
+        "1. X-HIT-Service-Token header (service token with prj/svc claims) - proxy should add this, "
+        "2. Authorization: Bearer token with prj/svc claims (for direct service-to-module calls). "
+        "If you're making a user-facing request, ensure the proxy adds X-HIT-Service-Token header."
     )
 
 
