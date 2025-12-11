@@ -100,7 +100,13 @@ class DatabaseConnectionManager:
 
         if not secret:
             raise DatabaseConnectionError(
-                f"Provisioner returned empty secret for namespace '{namespace}' ({secret_key})."
+                f"Provisioner returned empty secret for namespace '{namespace}' ({secret_key}). "
+                f"This usually means:\n"
+                f"  1. The database hasn't been provisioned yet - run 'hit db provision' or deploy the project\n"
+                f"  2. The provisioner secrets weren't regenerated after provisioning\n"
+                f"  3. The database name or namespace in hit.yaml doesn't match what was provisioned\n"
+                f"Check that the database '{secret_key}' exists in namespace '{namespace}' and that "
+                f"provisioner.secrets.json has been updated."
             )
 
         db_url = secret.get("url") or secret.get("DATABASE_URL")
