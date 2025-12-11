@@ -76,7 +76,12 @@ class ProvisionerClient:
 
         logger.debug(
             "Provisioner request",
-            extra={"method": method, "url": url, "payload": json_body},
+            extra={
+                "method": method,
+                "url": url,
+                "payload": json_body,
+                "has_auth_header": "Authorization" in headers,
+            },
         )
 
         try:
@@ -216,26 +221,26 @@ class ProvisionerClient:
     def get_module_config(self, module_name: str) -> dict[str, Any]:
         """Fetch module-specific configuration from the provisioner."""
         from hit_modules.logger import get_logger
-        
+
         logger = get_logger(__name__)
         payload = {"moduleName": module_name}
-        
+
         logger.debug(
             f"Requesting module config from provisioner: module={module_name}, "
             f"endpoint={self.base_url}/api/v1/config/module"
         )
-        
+
         result = self._request(
             "POST",
             "/api/v1/config/module",
             json_body=payload,
             expected_status=200,
         )
-        
+
         logger.debug(
             f"Provisioner returned config for {module_name}: "
             f"keys={list(result.keys()) if result else 'empty'}, "
             f"has_settings={'settings' in result if result else False}"
         )
-        
+
         return result

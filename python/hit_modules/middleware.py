@@ -22,6 +22,7 @@ def _get_provisioner_client(token: str | None = None) -> ProvisionerClient:
 
     Args:
         token: Optional token to use for authentication.
+               If provided, this token will be used for provisioner requests.
                If None, creates client without token (for anonymous calls).
     """
     from .config import ClientConfig
@@ -35,7 +36,7 @@ def _get_provisioner_client(token: str | None = None) -> ProvisionerClient:
 
     config = ClientConfig(
         base_url=base_url,
-        module_token=None,
+        module_token=token,  # Use the passed token (service token from request)
         require_token=False,  # Don't require token - we're a shared module
     )
 
@@ -116,16 +117,22 @@ def _load_module_config(
         client = _get_provisioner_client(token=token)
         logger.debug(
             f"Fetching config for module {module_name} from provisioner "
-            f"(project: {project_slug or 'none'}, service: {service_name or 'none'})"
+            f"(project: {project_slug or 'none'}, service: {service_name or 'none'}, "
+            f"has_token={bool(token)})"
         )
+        if not token:
+            logger.warning(
+                f"No token provided for config request to module {module_name}. "
+                f"Provisioner will return empty config without a valid service token."
+            )
         config = client.get_module_config(module_name)
-        
+
         # Log detailed info about what was received
         has_settings = bool(config.get("settings"))
         has_features = bool(config.get("features"))
         has_secrets = bool(config.get("secrets"))
         config_keys = list(config.keys())
-        
+
         if not config:
             logger.warning(
                 f"Provisioner returned empty config for module {module_name} "
@@ -141,9 +148,7 @@ def _load_module_config(
             )
             if has_settings:
                 settings_keys = list(config.get("settings", {}).keys())
-                logger.debug(
-                    f"Module {module_name} settings keys: {settings_keys}"
-                )
+                logger.debug(f"Module {module_name} settings keys: {settings_keys}")
 
         # Cache it (without token - token is added per-request)
         _config_cache[cache_key] = config
