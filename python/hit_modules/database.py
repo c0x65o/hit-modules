@@ -25,7 +25,24 @@ logger = get_logger(__name__)
 
 
 class DatabaseConnectionManager:
-    """Provides cached SQLAlchemy engines for module databases."""
+    """Provides cached SQLAlchemy engines for module databases.
+
+    For shared modules (auth, email, etc.), you MUST provide either:
+    - A pre-configured ProvisionerClient (from get_provisioner_client dependency)
+    - A service token (from the request)
+
+    The client/token is used to authenticate with the provisioner to fetch
+    database credentials. Without it, the provisioner returns 401 Unauthorized.
+
+    Example usage in shared modules:
+        # Preferred: Use the request-scoped client
+        client = await get_provisioner_client(request)
+        db_manager = DatabaseConnectionManager(client=client)
+
+        # Alternative: Pass the token directly
+        token = await get_service_token(request)
+        db_manager = DatabaseConnectionManager(token=token)
+    """
 
     def __init__(
         self,
@@ -35,51 +52,55 @@ class DatabaseConnectionManager:
         """Initialize database connection manager.
 
         Args:
-            client: Optional pre-configured provisioner client
-            token: Bearer token to use for provisioner requests (REQUIRED for shared modules).
-                   This should be the calling service's token from the request.
+            client: Pre-configured provisioner client (preferred).
+                    Use get_provisioner_client(request) to get one.
+            token: Service token from the request.
+                   Required if client is not provided.
+
+        Raises:
+            DatabaseConnectionError: If neither client nor token is provided,
+                                    or if PROVISIONER_URL is not set.
         """
         import os
         from .config import ClientConfig
 
         self._token = token
-        token_preview = token[:30] + "..." if token and len(token) > 30 else token or "None"
-        
-        logger.info(
-            f"DatabaseConnectionManager.__init__: token_provided={bool(token)}, "
-            f"token_preview={token_preview}, client_provided={bool(client)}"
-        )
-        
+
         if client:
             self._client = client
-            logger.debug("Using provided ProvisionerClient")
-        else:
+            logger.debug("DatabaseConnectionManager: using provided ProvisionerClient")
+        elif token:
+            # Create client with the provided token
             base_url = os.environ.get("PROVISIONER_URL", "").strip()
-            logger.debug(f"Creating new ProvisionerClient: base_url={base_url or 'NOT SET'}")
-            
             if not base_url:
                 raise DatabaseConnectionError(
                     "PROVISIONER_URL is required for database connections. "
                     "Set PROVISIONER_URL to the provisioner service URL."
                 )
-            
+
+            token_preview = token[:30] + "..." if len(token) > 30 else token
+            logger.debug(
+                f"DatabaseConnectionManager: creating ProvisionerClient with token "
+                f"(preview: {token_preview})"
+            )
+
             config = ClientConfig(
                 base_url=base_url,
-                module_token=token,  # Use the provided token for auth
+                module_token=token,
                 require_token=False,
             )
-            
-            # Verify token was set in config
-            if token and not config.module_token:
-                logger.error(f"Token was passed but not set in ClientConfig!")
-            
-            logger.debug(
-                f"ClientConfig created: base_url={config.base_url}, "
-                f"module_token_set={bool(config.module_token)}"
-            )
-            
             self._client = ProvisionerClient(config=config, require_token=False)
-        
+        else:
+            raise DatabaseConnectionError(
+                "DatabaseConnectionManager requires either a ProvisionerClient or a service token. "
+                "For shared modules, use:\n"
+                "  client = await get_provisioner_client(request)\n"
+                "  db_manager = DatabaseConnectionManager(client=client)\n"
+                "Or:\n"
+                "  token = await get_service_token(request)\n"
+                "  db_manager = DatabaseConnectionManager(token=token)"
+            )
+
         self._engines: Dict[str, Engine] = {}
 
     def _ensure_sqlalchemy(self) -> None:

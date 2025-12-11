@@ -32,7 +32,14 @@ from .auto_events import (
     AutoEventsConfig,
 )
 from .fastapi import create_hit_app, install_hit_modules
-from .middleware import get_module_config, get_module_config_from_request, get_module_secrets, get_module_settings
+from .middleware import (
+    get_module_config,
+    get_module_config_from_request,
+    get_module_secrets,
+    get_module_settings,
+    get_service_token,
+    get_provisioner_client,
+)
 from .auth import require_provisioned_token
 from .version import get_module_version, log_module_startup
 
@@ -75,6 +82,9 @@ __all__ = [
     "get_module_config_from_request",
     "get_module_secrets",
     "get_module_settings",
+    # Request-scoped dependencies
+    "get_service_token",
+    "get_provisioner_client",
     # Version
     "get_module_version",
     "log_module_startup",

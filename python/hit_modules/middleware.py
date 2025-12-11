@@ -258,6 +258,77 @@ def _decode_project_slug(token: str) -> str | None:
     return claims.get("prj") if claims else None
 
 
+# Request-scoped storage key for the provisioner client
+_REQUEST_CLIENT_KEY = "hit_provisioner_client"
+_REQUEST_TOKEN_KEY = "hit_service_token"
+
+
+async def get_service_token(request: Request) -> str:
+    """FastAPI dependency that extracts and validates the service token from request.
+
+    The service token identifies which project/service is making the request.
+    This is separate from user authentication (email/password).
+
+    Returns:
+        The service token string
+
+    Raises:
+        RuntimeError: If no valid service token is present
+    """
+    # Check if we already extracted it
+    if hasattr(request.state, _REQUEST_TOKEN_KEY):
+        return getattr(request.state, _REQUEST_TOKEN_KEY)
+
+    token = _extract_bearer_token(request)
+    if not token:
+        raise RuntimeError(
+            "Service token required. "
+            "Requests must include X-HIT-Service-Token header or Authorization: Bearer <service_token>. "
+            "Service tokens identify which project/service is making the request."
+        )
+
+    # Validate token has required claims
+    claims = _decode_token_claims(token)
+    if not claims or not claims.get("prj") or not claims.get("svc"):
+        raise RuntimeError(
+            "Invalid service token. "
+            "Token must have both 'prj' (project) and 'svc' (service) claims."
+        )
+
+    # Store for reuse in this request
+    setattr(request.state, _REQUEST_TOKEN_KEY, token)
+    return token
+
+
+async def get_provisioner_client(request: Request) -> ProvisionerClient:
+    """FastAPI dependency that provides a request-scoped ProvisionerClient.
+
+    The client is configured with the service token from the request.
+    This ensures all provisioner calls (config, secrets, database) use the same token.
+
+    Usage:
+        @app.get("/endpoint")
+        async def my_endpoint(
+            client: ProvisionerClient = Depends(get_provisioner_client),
+        ):
+            config = client.get_module_config("auth")
+            secret = client.get_database_secret(namespace="shared-db", ...)
+    """
+    # Check if we already created a client for this request
+    if hasattr(request.state, _REQUEST_CLIENT_KEY):
+        return getattr(request.state, _REQUEST_CLIENT_KEY)
+
+    # Get the service token
+    token = await get_service_token(request)
+
+    # Create client with the token
+    client = _get_provisioner_client(token=token)
+
+    # Store for reuse in this request
+    setattr(request.state, _REQUEST_CLIENT_KEY, client)
+    return client
+
+
 async def get_module_config_from_request(request: Request) -> dict[str, Any]:
     """FastAPI dependency that provides module config using the request's service token.
 
@@ -276,36 +347,15 @@ async def get_module_config_from_request(request: Request) -> dict[str, Any]:
     """
     module_name = _get_module_name()
 
-    # Try to extract service token from request
-    token = _extract_bearer_token(request)
-
-    if not token:
-        raise RuntimeError(
-            f"Service token required for module {module_name}. "
-            f"Requests must include X-HIT-Service-Token header or Authorization: Bearer <service_token>. "
-            f"Service tokens must have both 'prj' (project) and 'svc' (service) claims."
-        )
+    # Use the centralized token extraction
+    token = await get_service_token(request)
 
     # Decode token claims to extract project_slug and service_name
     claims = _decode_token_claims(token)
-    if not claims:
-        raise RuntimeError(
-            f"Invalid token format for module {module_name}. "
-            f"Token must be a valid JWT with 'prj' and 'svc' claims."
-        )
-
     project_slug = claims.get("prj")
     service_name = claims.get("svc")
 
-    # Require both project_slug and service_name - service tokens always have both
-    if not project_slug or not service_name:
-        raise RuntimeError(
-            f"Service token missing required claims for module {module_name}. "
-            f"Service tokens must have both 'prj' (project slug) and 'svc' (service name) claims. "
-            f"Token has prj: {bool(project_slug)}, svc: {bool(service_name)}. "
-            f"Legacy project-only tokens are no longer supported."
-        )
-
+    # Load config (token already validated by get_service_token)
     return _load_module_config(
         module_name=module_name,
         project_slug=project_slug,
