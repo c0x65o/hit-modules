@@ -162,17 +162,20 @@ def require_method_acl(module_name: str | None = None, method_name: str | None =
             path = request.url.path
             meth_name = path.rstrip("/").split("/")[-1]
 
-        if credentials is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Missing Authorization header",
-            )
+        # Get token from Authorization header or X-HIT-Service-Token header
+        token = None
+        if credentials is not None and credentials.credentials:
+            token = credentials.credentials
+        elif request:
+            # Fall back to X-HIT-Service-Token header (used by CAC dashboard and proxies)
+            service_token = request.headers.get("X-HIT-Service-Token")
+            if service_token:
+                token = service_token
 
-        token = credentials.credentials
         if not token:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Missing bearer token",
+                detail="Missing Authorization header",
             )
 
         try:
