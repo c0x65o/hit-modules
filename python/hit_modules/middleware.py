@@ -269,6 +269,10 @@ async def get_service_token(request: Request) -> str:
     The service token identifies which project/service is making the request.
     This is separate from user authentication (email/password).
 
+    SECURITY: Service tokens should ONLY come from:
+    - X-HIT-Service-Token header (added by proxy/server-side)
+    - NOT from user requests directly (users should never have service tokens)
+
     Returns:
         The service token string
 
@@ -279,8 +283,22 @@ async def get_service_token(request: Request) -> str:
     if hasattr(request.state, _REQUEST_TOKEN_KEY):
         return getattr(request.state, _REQUEST_TOKEN_KEY)
 
+    # Log what headers we have for debugging
+    has_service_token_header = bool(request.headers.get("X-HIT-Service-Token"))
+    has_auth_header = bool(request.headers.get("Authorization"))
+    auth_preview = request.headers.get("Authorization", "")[:30] + "..." if request.headers.get("Authorization") else "None"
+    
+    logger.debug(
+        f"Token extraction: has_X-HIT-Service-Token={has_service_token_header}, "
+        f"has_Authorization={has_auth_header}, auth_preview={auth_preview}"
+    )
+
     token = _extract_bearer_token(request)
     if not token:
+        logger.warning(
+            f"No service token found. Headers: X-HIT-Service-Token={has_service_token_header}, "
+            f"Authorization={has_auth_header}"
+        )
         raise RuntimeError(
             "Service token required. "
             "Requests must include X-HIT-Service-Token header or Authorization: Bearer <service_token>. "
@@ -289,11 +307,27 @@ async def get_service_token(request: Request) -> str:
 
     # Validate token has required claims
     claims = _decode_token_claims(token)
-    if not claims or not claims.get("prj") or not claims.get("svc"):
+    if not claims:
+        logger.error(f"Failed to decode token claims. Token preview: {token[:30]}...")
+        raise RuntimeError("Invalid service token format - cannot decode claims.")
+    
+    project_slug = claims.get("prj")
+    service_name = claims.get("svc")
+    
+    if not project_slug or not service_name:
+        logger.warning(
+            f"Service token missing required claims. prj={project_slug}, svc={service_name}, "
+            f"all_claims={list(claims.keys())}"
+        )
         raise RuntimeError(
             "Invalid service token. "
             "Token must have both 'prj' (project) and 'svc' (service) claims."
         )
+
+    logger.debug(
+        f"Service token validated: project={project_slug}, service={service_name}, "
+        f"source={'X-HIT-Service-Token' if has_service_token_header else 'Authorization'}"
+    )
 
     # Store for reuse in this request
     setattr(request.state, _REQUEST_TOKEN_KEY, token)
@@ -333,16 +367,14 @@ async def get_module_config_from_request(request: Request) -> dict[str, Any]:
     """FastAPI dependency that provides module config using the request's service token.
 
     This dependency:
-    - Extracts the service token from X-HIT-Service-Token or Authorization header
+    - Extracts the service token from X-HIT-Service-Token header (preferred - added by proxy)
+    - Falls back to Authorization header ONLY if X-HIT-Service-Token is not present
     - Validates that the token has both 'prj' (project) and 'svc' (service) claims
     - Passes the token to provisioner for K8s dynamic ConfigMap lookup
     - Caches config per-project+service for efficiency
-    - Works with both service tokens and user JWTs (when proxy adds service token)
 
-    When a user JWT is present (user-facing requests):
-    - The proxy should add X-HIT-Service-Token header
-    - If service token is missing, falls back to extracting from user JWT if it has prj/svc claims
-    - Otherwise raises an error (proxy should always add service token)
+    SECURITY: Service tokens should ONLY come from the proxy/server-side.
+    User requests should have X-HIT-Service-Token added by the proxy, not from the client.
 
     Usage:
         @app.get("/endpoint")
@@ -352,6 +384,18 @@ async def get_module_config_from_request(request: Request) -> dict[str, Any]:
     """
     module_name = _get_module_name()
 
+    # Log request details for debugging
+    has_service_token_header = bool(request.headers.get("X-HIT-Service-Token"))
+    has_auth_header = bool(request.headers.get("Authorization"))
+    path = request.url.path
+    method = request.method
+    
+    logger.debug(
+        f"Config lookup: method={method}, path={path}, "
+        f"has_X-HIT-Service-Token={has_service_token_header}, "
+        f"has_Authorization={has_auth_header}"
+    )
+
     # Try to get service token first (preferred - proxy should add this)
     try:
         token = await get_service_token(request)
@@ -360,17 +404,27 @@ async def get_module_config_from_request(request: Request) -> dict[str, Any]:
         service_name = claims.get("svc")
         
         if project_slug and service_name:
+            token_source = "X-HIT-Service-Token" if has_service_token_header else "Authorization"
+            logger.info(
+                f"Using service token for config: project={project_slug}, service={service_name}, "
+                f"source={token_source}, path={path}"
+            )
             return _load_module_config(
                 module_name=module_name,
                 project_slug=project_slug,
                 service_name=service_name,
                 token=token,
             )
-    except RuntimeError:
-        # No service token found - check if we have a user JWT that might have prj/svc claims
-        pass
+    except RuntimeError as e:
+        # Log the error but continue to try fallback
+        logger.warning(
+            f"Service token extraction failed: {e}, path={path}, "
+            f"has_X-HIT-Service-Token={has_service_token_header}, "
+            f"has_Authorization={has_auth_header}"
+        )
 
     # Fallback: Check if Authorization header has a token with prj/svc claims
+    # NOTE: This should only happen for direct service-to-module calls, not user requests
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
         user_token = auth_header[7:]
@@ -379,15 +433,31 @@ async def get_module_config_from_request(request: Request) -> dict[str, Any]:
             project_slug = user_claims.get("prj")
             service_name = user_claims.get("svc")
             if project_slug and service_name:
-                # User JWT has prj/svc claims - use it for config lookup
+                # WARNING: This is a fallback - user requests should have X-HIT-Service-Token
+                logger.warning(
+                    f"Using Authorization token for config (fallback): project={project_slug}, "
+                    f"service={service_name}, path={path}. "
+                    "This should only happen for direct service-to-module calls. "
+                    "User requests should have X-HIT-Service-Token header from proxy."
+                )
                 return _load_module_config(
                     module_name=module_name,
                     project_slug=project_slug,
                     service_name=service_name,
                     token=user_token,
                 )
+            else:
+                logger.debug(
+                    f"Authorization token missing prj/svc claims: has_prj={bool(project_slug)}, "
+                    f"has_svc={bool(service_name)}, claims={list(user_claims.keys())}"
+                )
 
     # No valid token found - this should not happen if proxy is working correctly
+    logger.error(
+        f"Cannot determine project/service for config lookup: path={path}, method={method}, "
+        f"has_X-HIT-Service-Token={has_service_token_header}, "
+        f"has_Authorization={has_auth_header}"
+    )
     raise RuntimeError(
         "Cannot determine project/service for config lookup. "
         "Requests must include either: "
