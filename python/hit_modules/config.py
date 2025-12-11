@@ -83,6 +83,19 @@ class ClientConfig:
         token = self.module_token
         if token:
             headers["Authorization"] = f"Bearer {token}"
+            from .logger import get_logger
+
+            logger = get_logger(__name__)
+            logger.debug(
+                f"Added Authorization header to request (token_preview: {token[:30] + '...' if len(token) > 30 else token})"
+            )
+        else:
+            from .logger import get_logger
+
+            logger = get_logger(__name__)
+            logger.debug(
+                "No token in ClientConfig, Authorization header will not be included"
+            )
         return headers
 
     def to_dict(self) -> dict[str, Any]:

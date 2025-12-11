@@ -74,14 +74,13 @@ class ProvisionerClient:
         url = self._build_url(path)
         headers = self._config.headers()
 
-        logger.debug(
-            "Provisioner request",
-            extra={
-                "method": method,
-                "url": url,
-                "payload": json_body,
-                "has_auth_header": "Authorization" in headers,
-            },
+        has_auth = "Authorization" in headers
+        auth_preview = (
+            headers.get("Authorization", "")[:30] + "..." if has_auth else "None"
+        )
+        logger.info(
+            f"Provisioner request: method={method}, url={url}, "
+            f"has_auth_header={has_auth}, auth_preview={auth_preview}"
         )
 
         try:

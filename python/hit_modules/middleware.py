@@ -34,11 +34,24 @@ def _get_provisioner_client(token: str | None = None) -> ProvisionerClient:
             "PROVISIONER_URL is required. Set it to the provisioner service URL."
         )
 
+    token_preview = token[:30] + "..." if token and len(token) > 30 else token or "None"
+    logger.debug(
+        f"Creating provisioner client: base_url={base_url}, "
+        f"has_token={bool(token)}, token_preview={token_preview}"
+    )
+
     config = ClientConfig(
         base_url=base_url,
         module_token=token,  # Use the passed token (service token from request)
         require_token=False,  # Don't require token - we're a shared module
     )
+
+    # Verify the token is actually set in the config
+    if token and not config.module_token:
+        logger.error(
+            f"Token was provided but not set in ClientConfig! "
+            f"Provided token: {token_preview}"
+        )
 
     return ProvisionerClient(config=config, require_token=False)
 
@@ -115,15 +128,16 @@ def _load_module_config(
 
     try:
         client = _get_provisioner_client(token=token)
-        logger.debug(
+        logger.info(
             f"Fetching config for module {module_name} from provisioner "
             f"(project: {project_slug or 'none'}, service: {service_name or 'none'}, "
-            f"has_token={bool(token)})"
+            f"has_token={bool(token)}, token_preview={token[:20] + '...' if token and len(token) > 20 else token or 'None'})"
         )
         if not token:
             logger.warning(
                 f"No token provided for config request to module {module_name}. "
-                f"Provisioner will return empty config without a valid service token."
+                f"Provisioner will return empty config without a valid service token. "
+                f"This is expected during startup, but requests should include X-HIT-Service-Token header."
             )
         config = client.get_module_config(module_name)
 
