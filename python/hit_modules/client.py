@@ -172,8 +172,15 @@ class ProvisionerClient:
             return False
 
     def verify_project_token(self, token: str) -> dict[str, Any]:
-        """Ask the provisioner to validate an end-user/project token."""
+        """DEPRECATED: use verify_service_token().
 
+        This remains as a compatibility shim for older code that still refers
+        to "project tokens". The provisioner validates *service tokens*.
+        """
+        return self.verify_service_token(token)
+
+    def verify_service_token(self, token: str) -> dict[str, Any]:
+        """Ask the provisioner to validate a service token."""
         payload = {"token": token}
         return self._request(
             "POST",

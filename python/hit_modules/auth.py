@@ -63,7 +63,7 @@ def _client() -> ProvisionerClient:
 def require_provisioned_token(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> dict[str, Any]:
-    """FastAPI dependency that enforces CAC-issued bearer tokens."""
+    """FastAPI dependency that enforces CAC-issued *service* bearer tokens."""
     if credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -86,9 +86,9 @@ def require_provisioned_token(
                 detail="Provisioner client not initialized",
             )
 
-        result = client.verify_project_token(token)
+        result = client.verify_service_token(token)
         if result is None:
-            logger.error("Provisioner verify_project_token returned None")
+            logger.error("Provisioner verify_service_token returned None")
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Provisioner returned invalid response",
@@ -103,7 +103,7 @@ def require_provisioned_token(
         logger.warning("Provisioner token verification failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid project token",
+            detail="Invalid service token",
         ) from exc
 
     claims = result.get("claims")
@@ -111,7 +111,7 @@ def require_provisioned_token(
         logger.debug(f"Token verification result missing claims: result={result}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid project token",
+            detail="Invalid service token",
         )
 
     return claims
