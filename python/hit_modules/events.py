@@ -547,6 +547,17 @@ async def _publish_via_http(
     url = f"{events_url.rstrip('/')}/publish"
     params = {"event_type": event_type}
     headers = {"X-HIT-Project-Slug": project_slug}
+    
+    # Include service token for inter-module authentication
+    import os
+    service_token = os.environ.get("HIT_SERVICE_TOKEN")
+    if service_token:
+        headers["X-HIT-Service-Token"] = service_token
+    else:
+        logger.warning(
+            "HIT_SERVICE_TOKEN not found. Events module may reject the request. "
+            "Set HIT_SERVICE_TOKEN in environment for inter-module authentication."
+        )
 
     if correlation_id:
         payload = {**payload, "correlation_id": correlation_id}
