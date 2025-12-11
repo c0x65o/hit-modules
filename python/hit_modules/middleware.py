@@ -35,7 +35,6 @@ def _get_provisioner_client(token: str | None = None) -> ProvisionerClient:
 
     config = ClientConfig(
         base_url=base_url,
-        project_token=token,
         module_token=None,
         require_token=False,  # Don't require token - we're a shared module
     )

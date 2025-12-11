@@ -31,7 +31,6 @@ class ClientConfig:
 
     base_url: str
     module_token: str | None = None
-    project_token: str | None = None
     timeout: float = 5.0
     verify_ssl: bool = True
     # Allow creating client without token (for shared modules that validate incoming tokens)
@@ -40,9 +39,9 @@ class ClientConfig:
     @classmethod
     def from_env(cls, *, require_token: bool = True) -> "ClientConfig":
         """Build config using environment variables.
-        
+
         Args:
-            require_token: If True (default), requires HIT_PROJECT_TOKEN or HIT_MODULE_ID_TOKEN.
+            require_token: If True (default), requires HIT_MODULE_ID_TOKEN.
                           Set to False for shared modules that only need to validate incoming tokens.
         """
 
@@ -54,14 +53,13 @@ class ClientConfig:
             )
 
         module_token = (os.environ.get("HIT_MODULE_ID_TOKEN") or "").strip() or None
-        project_token = (os.environ.get("HIT_PROJECT_TOKEN") or "").strip() or None
-        
+
         # Only require token if explicitly requested (project-specific modules)
         # Shared modules may not have their own token - they validate incoming tokens
-        if require_token and not (module_token or project_token):
+        if require_token and not module_token:
             raise ProvisionerConfigError(
-                "HIT_PROJECT_TOKEN is required for module provisioning. "
-                "Ensure your pod is injected with HIT_PROJECT_TOKEN (and optionally HIT_MODULE_ID_TOKEN)."
+                "HIT_MODULE_ID_TOKEN is required for module provisioning. "
+                "Ensure your pod is injected with HIT_MODULE_ID_TOKEN."
             )
 
         timeout = _read_float(os.environ.get("HIT_PROVISIONER_TIMEOUT"), 5.0)
@@ -70,7 +68,6 @@ class ClientConfig:
         return cls(
             base_url=base_url,
             module_token=module_token,
-            project_token=project_token,
             timeout=timeout,
             verify_ssl=verify_ssl,
             require_token=require_token,
@@ -83,7 +80,7 @@ class ClientConfig:
             "User-Agent": "hit-modules-client/0.1",
             "Accept": "application/json",
         }
-        token = self.module_token or self.project_token
+        token = self.module_token
         if token:
             headers["Authorization"] = f"Bearer {token}"
         return headers
@@ -94,8 +91,6 @@ class ClientConfig:
         return {
             "base_url": self.base_url,
             "module_token_set": bool(self.module_token),
-            "project_token_set": bool(self.project_token),
             "timeout": self.timeout,
             "verify_ssl": self.verify_ssl,
         }
-

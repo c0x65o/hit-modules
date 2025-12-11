@@ -51,7 +51,6 @@ class DatabaseConnectionManager:
             if base_url:
                 config = ClientConfig(
                     base_url=base_url,
-                    project_token=token,
                     module_token=None,
                     require_token=False,
                 )

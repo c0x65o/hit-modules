@@ -1,8 +1,8 @@
 """Authentication helpers for HIT modules (FastAPI integration).
 
-Validates incoming service/project tokens issued by CAC.
-Service tokens (HIT_SERVICE_TOKEN) include module/database ACL claims.
-Project tokens (HIT_PROJECT_TOKEN) are legacy and grant full access.
+Validates incoming service tokens issued by CAC.
+Service tokens (HIT_SERVICE_TOKEN) include module/database ACL claims and
+encode the service name in their 'svc' claim for reverse lookup.
 
 Method-level ACL:
     Service tokens include a `module_uses` claim that maps module names to

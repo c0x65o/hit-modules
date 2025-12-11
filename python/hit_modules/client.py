@@ -31,7 +31,7 @@ class ProvisionerClient:
         require_token: bool = True,
     ):
         """Initialize the provisioner client.
-        
+
         Args:
             config: Client configuration. If None, loads from environment.
             session: Optional requests session to use.
@@ -44,9 +44,9 @@ class ProvisionerClient:
                 "Provisioner base URL missing. Did you forget to set PROVISIONER_URL?"
             )
         # Only require token if explicitly requested
-        if require_token and not (self._config.module_token or self._config.project_token):
+        if require_token and not self._config.module_token:
             raise ProvisionerConfigError(
-                "Provisioner authentication requires HIT_PROJECT_TOKEN (and optionally HIT_MODULE_ID_TOKEN)."
+                "Provisioner authentication requires HIT_MODULE_ID_TOKEN."
             )
         self._session = session or requests.Session()
 
@@ -103,7 +103,9 @@ class ProvisionerClient:
                 ) from exc
 
         if response.status_code == 401:
-            raise ProvisionerAuthError("Provisioner authentication failed", status_code=401)
+            raise ProvisionerAuthError(
+                "Provisioner authentication failed", status_code=401
+            )
 
         if response.status_code == 404:
             raise SecretNotFoundError(
@@ -183,12 +185,12 @@ class ProvisionerClient:
         method_name: str | None = None,
     ) -> dict[str, Any]:
         """Validate a token and check if module/method access is allowed.
-        
+
         Args:
             token: JWT token to validate
             module_name: Module name to check access for (e.g., "ping-pong")
             method_name: Optional method name to check (e.g., "increment")
-            
+
         Returns:
             Dict with:
             - valid: bool - token is valid
@@ -203,7 +205,7 @@ class ProvisionerClient:
         }
         if method_name:
             payload["methodName"] = method_name
-            
+
         return self._request(
             "POST",
             "/api/v1/tokens/validate",
@@ -221,4 +223,3 @@ class ProvisionerClient:
             json_body=payload,
             expected_status=200,
         )
-
