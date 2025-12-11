@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 
 from .client import ProvisionerClient
 from .errors import ProvisionerConfigError, ProvisionerError
@@ -452,18 +452,15 @@ async def get_module_config_from_request(request: Request) -> dict[str, Any]:
                     f"has_svc={bool(service_name)}, claims={list(user_claims.keys())}"
                 )
 
-    # No valid token found - this should not happen if proxy is working correctly
+    # No valid token found - return 403 Forbidden (authentication/authorization issue)
     logger.error(
         f"Cannot determine project/service for config lookup: path={path}, method={method}, "
         f"has_X-HIT-Service-Token={has_service_token_header}, "
         f"has_Authorization={has_auth_header}"
     )
-    raise RuntimeError(
-        "Cannot determine project/service for config lookup. "
-        "Requests must include either: "
-        "1. X-HIT-Service-Token header (service token with prj/svc claims) - proxy should add this, "
-        "2. Authorization: Bearer token with prj/svc claims (for direct service-to-module calls). "
-        "If you're making a user-facing request, ensure the proxy adds X-HIT-Service-Token header."
+    raise HTTPException(
+        status_code=403,
+        detail="Not authenticated. Authentication required to access this resource."
     )
 
 
