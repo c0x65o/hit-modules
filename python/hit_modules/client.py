@@ -250,3 +250,22 @@ class ProvisionerClient:
         )
 
         return result
+
+    def get_database_admin_secrets(self) -> dict[str, Any]:
+        """Fetch admin/superuser database credentials for the project.
+
+        Used by db-clean and other admin operations that need superuser access.
+        The project is determined from the service token claims.
+
+        Returns:
+            Dict with:
+            - admin_configs: list of dicts with database, host, port, admin_user, admin_password
+            - databases_checked: number of databases in hit.yaml
+            - admin_configs_found: number of admin configs successfully found
+        """
+        return self._request(
+            "POST",
+            "/api/v1/secrets/database-admin",
+            json_body={},
+            expected_status=200,
+        )
