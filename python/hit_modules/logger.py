@@ -19,6 +19,9 @@ def configure_root_logger(level: Optional[str] = None) -> None:
     This should be called once at application startup. Subsequent calls
     are idempotent.
 
+    Also configures Uvicorn loggers to use the same format for consistent
+    log output across all HIT modules.
+
     Args:
         level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
                If None, reads from HIT_MODULES_LOG_LEVEL env var or defaults to INFO.
@@ -31,24 +34,32 @@ def configure_root_logger(level: Optional[str] = None) -> None:
     if level is None:
         level = os.environ.get("HIT_MODULES_LOG_LEVEL", "INFO").upper()
 
-    # Configure root logger
-    root_logger = logging.getLogger()
-    root_logger.setLevel(level)
-
-    # Remove any existing handlers to avoid duplicates
-    root_logger.handlers.clear()
-
-    # Create console handler with detailed formatting
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setLevel(level)
-
     # Format with timestamp (including milliseconds), level, logger name, and message
     formatter = logging.Formatter(
         fmt="%(asctime)s.%(msecs)03d | %(levelname)-8s | %(name)s | %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+
+    # Create console handler with detailed formatting
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(level)
     handler.setFormatter(formatter)
+
+    # Configure root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level)
+    root_logger.handlers.clear()
     root_logger.addHandler(handler)
+
+    # Configure Uvicorn loggers to use the same format
+    # This ensures consistent timestamps across all log output
+    uvicorn_loggers = ["uvicorn", "uvicorn.error", "uvicorn.access"]
+    for logger_name in uvicorn_loggers:
+        uvicorn_logger = logging.getLogger(logger_name)
+        uvicorn_logger.handlers.clear()
+        uvicorn_logger.addHandler(handler)
+        uvicorn_logger.setLevel(level)
+        uvicorn_logger.propagate = False
 
     _root_logger_configured = True
 

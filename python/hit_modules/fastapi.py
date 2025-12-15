@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import sys
 from typing import Any
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, status
@@ -16,6 +18,32 @@ from .middleware import clear_config_cache, get_module_config, get_module_config
 from .version import get_module_version, log_module_startup
 
 logger = get_logger(__name__)
+
+
+def _configure_uvicorn_logging() -> None:
+    """Configure Uvicorn loggers to use HIT standard format.
+    
+    This must be called during FastAPI startup event, after Uvicorn has
+    configured its own loggers. Otherwise Uvicorn will overwrite our config.
+    """
+    level = os.environ.get("HIT_MODULES_LOG_LEVEL", "INFO").upper()
+    
+    formatter = logging.Formatter(
+        fmt="%(asctime)s.%(msecs)03d | %(levelname)-8s | %(name)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(level)
+    handler.setFormatter(formatter)
+    
+    uvicorn_loggers = ["uvicorn", "uvicorn.error", "uvicorn.access"]
+    for logger_name in uvicorn_loggers:
+        uvicorn_logger = logging.getLogger(logger_name)
+        uvicorn_logger.handlers.clear()
+        uvicorn_logger.addHandler(handler)
+        uvicorn_logger.setLevel(level)
+        uvicorn_logger.propagate = False
 
 # Public router for routes that don't require authentication (K8s probes, monitoring)
 _public_router = APIRouter(prefix="/hit", tags=["hit"])
@@ -184,6 +212,7 @@ def install_hit_modules(
     - Adds shared HIT routes (/hit/healthz, /hit/version, /hit/config, /hit/provisioner)
     - Configures CORS (optional)
     - Logs module startup
+    - Configures Uvicorn loggers to use standard HIT format
     
     Args:
         app: FastAPI application instance
@@ -206,6 +235,11 @@ def install_hit_modules(
     """
     module_name = os.getenv("HIT_MODULE_NAME", "unknown")
     version = get_module_version(module_name)
+    
+    # Add startup event to configure Uvicorn logging after Uvicorn has set up its loggers
+    @app.on_event("startup")
+    async def configure_logging_on_startup() -> None:
+        _configure_uvicorn_logging()
     
     # Log startup
     log_module_startup(module_name, version)
