@@ -13,6 +13,20 @@ from typing import Optional
 _root_logger_configured = False
 
 
+class _HitFormatter(logging.Formatter):
+    """Custom formatter that cleans up confusing logger names.
+    
+    Renames 'uvicorn.error' to 'uvicorn' since the '.error' doesn't mean
+    error-level logs - it's just Uvicorn's confusing naming for the stderr stream.
+    """
+    
+    def format(self, record: logging.LogRecord) -> str:
+        # Clean up confusing uvicorn logger names
+        if record.name == "uvicorn.error":
+            record.name = "uvicorn"
+        return super().format(record)
+
+
 def configure_root_logger(level: Optional[str] = None) -> None:
     """Configure the root logger with standard formatting.
 
@@ -35,7 +49,7 @@ def configure_root_logger(level: Optional[str] = None) -> None:
         level = os.environ.get("HIT_MODULES_LOG_LEVEL", "INFO").upper()
 
     # Format with timestamp (including milliseconds), level, logger name, and message
-    formatter = logging.Formatter(
+    formatter = _HitFormatter(
         fmt="%(asctime)s.%(msecs)03d | %(levelname)-8s | %(name)s | %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
