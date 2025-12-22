@@ -237,3 +237,77 @@ class DatabaseConnectionManager:
             except Exception as exc:  # pragma: no cover
                 logger.warning("Failed to dispose engine %s: %s", key, exc)
         self._engines.clear()
+
+    # ------------------------------------------------------------------
+    # Service-targeted database resolution (for task runners, multi-DB apps, etc.)
+    # ------------------------------------------------------------------
+
+    def get_service_database_url(
+        self,
+        *,
+        databases: list[dict[str, Any]],
+        service_name: str,
+        env_key: str = "DATABASE_URL",
+    ) -> str:
+        """Resolve the *primary* database URL for a specific service from hit.yaml `databases:`.
+
+        Why:
+        - Shared modules (auth, tasks, etc.) usually connect to THEIR OWN persistence DB via
+          module settings (settings.database.*).
+        - Some workflows (notably task execution) need to connect to the *target service's*
+          application database, which is defined in the project's top-level `databases:` section.
+        - We want a single place to implement this mapping so modules don't re-implement it.
+
+        Selection rules:
+        - Find a database role where:
+          - role.primary == True
+          - service_name is in role.services
+          - role.env == env_key (defaults to DATABASE_URL, which most app scripts expect)
+        - Use db_config.namespace + db_config.database as the provisioner secret lookup inputs.
+        - Pass role.name as the role hint when available.
+        """
+        if not service_name:
+            raise DatabaseConnectionError("service_name is required")
+
+        chosen: dict[str, Any] | None = None
+        for db_cfg in databases or []:
+            if not isinstance(db_cfg, dict):
+                continue
+            roles = db_cfg.get("roles", [])
+            if not isinstance(roles, list):
+                continue
+            for role_cfg in roles:
+                if not isinstance(role_cfg, dict):
+                    continue
+                services = role_cfg.get("services", [])
+                if not isinstance(services, list):
+                    services = []
+                if service_name not in services:
+                    continue
+                if not role_cfg.get("primary"):
+                    continue
+                role_env = role_cfg.get("env") or "DATABASE_URL"
+                if role_env != env_key:
+                    continue
+                chosen = {
+                    "namespace": db_cfg.get("namespace"),
+                    "database": db_cfg.get("database"),
+                    "role": role_cfg.get("name"),
+                }
+                break
+            if chosen:
+                break
+
+        if not chosen or not chosen.get("namespace") or not chosen.get("database"):
+            raise DatabaseConnectionError(
+                "No primary database mapping found for "
+                f"service='{service_name}' env_key='{env_key}'. "
+                "Ensure hit.yaml databases roles include primary: true, services: [<service>], "
+                f"and env: {env_key}."
+            )
+
+        return self.get_database_url(
+            namespace=str(chosen["namespace"]),
+            secret_key=str(chosen["database"]),
+            role=str(chosen.get("role") or "") or None,
+        )
